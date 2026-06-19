@@ -4,8 +4,9 @@
   "description": "PS2-inspired Electron frontend for Bazzite emulation",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "package": "electron-packager . ArqaLauncher --platform=win32 --arch=x64 --out=dist --icon=assets/icon.ico"
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
   },
   "keywords": [
     "electron",
@@ -18,9 +19,19 @@
   "license": "MIT",
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-deb": "^7.11.2",
+    "@electron-forge/maker-rpm": "^7.11.2",
+    "@electron-forge/maker-squirrel": "^7.11.2",
+    "@electron-forge/maker-zip": "^7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
+    "@electron-forge/plugin-fuses": "^7.11.2",
+    "@electron/fuses": "^1.8.0",
     "electron": "^26.6.10"
   },
   "allowScripts": {
     "electron@26.6.10": true
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "^1.0.1"
   }
 }
