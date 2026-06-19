@@ -31,6 +31,7 @@ const App = () => {
   const menuMusicRef = useRef(null);
   const navSoundRef = useRef(null);
   const startupSoundRef = useRef(null);
+  const menuBarRef = useRef(null);
   const lastGamepadState = useRef([]);
   const gamepadRAF = useRef(null);
 
@@ -118,6 +119,14 @@ const App = () => {
   useEffect(() => {
     bazzitePathRef.current = bazzitePath;
   }, [bazzitePath]);
+
+  useEffect(() => {
+    if (!menuBarRef.current) return;
+    const activeItem = menuBarRef.current.querySelector('.xmb-title.active');
+    if (activeItem) {
+      activeItem.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, [activeSection]);
 
   useEffect(() => {
     const timer = setTimeout(() => setBooting(false), 1800);
@@ -538,23 +547,26 @@ const App = () => {
       h('div', { className: 'startup-text' }, 'ARQA Launcher')
     ),
     h('div', { className: 'window-frame' },
-    h('div', { className: 'titlebar' },
-      h('div', { className: 'title-left' },
-        h('img', { className: 'app-logo', src: './assets/ArqaLogo.png', alt: 'ARQA' }),
-        h('div', null,
-          h('span', { className: 'logo' }, 'ARQA'),
-          h('span', { className: 'subtitle' }, 'XMB Shell')
+      h('div', { className: 'metro-background' },
+        h('div', { className: 'metro-circle' }),
+        h('div', { className: 'metro-ring' }),
+        h('div', { className: 'metro-triangle' }),
+        h('div', { className: 'metro-square' }),
+        h('div', { className: 'metro-line' })
+      ),
+      h('div', { className: 'titlebar' },
+        h('div', { className: 'title-left' },
+          h('img', { className: 'app-logo', src: './assets/ArqaLogo.png', alt: 'ARQA' }),
+          h('div', null,
+            h('span', { className: 'logo' }, 'ARQA'),
+            h('span', { className: 'subtitle' }, 'XMB Shell')
+          )
         )
       ),
-      h('div', { className: 'window-controls' },
-        h('button', { onClick: () => window.bazziteAPI?.minimizeWindow(), tabIndex: -1 }, '—'),
-        h('button', { onClick: () => window.bazziteAPI?.toggleMaximizeWindow(), tabIndex: -1 }, '□')
-      )
-    ),
-    h('div', { className: 'xmb-main' },
-      ...navItems
-    ),
-    h('main', { className: 'content' },
+      h('div', { className: 'xmb-main', ref: menuBarRef },
+        ...navItems
+      ),
+      h('main', { className: 'content' },
       h('section', { className: 'card xmb-panel' },
         h('div', { className: 'panel-header' },
           h('div', null,
