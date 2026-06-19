@@ -1,0 +1,25 @@
+{
+  "name": "arqa-launcher",
+  "version": "0.1.0",
+  "description": "PS2-inspired Electron frontend for Bazzite emulation",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-packager . ArqaLauncher --platform=win32 --arch=x64 --out=dist --icon=assets/icon.ico"
+  },
+  "keywords": [
+    "electron",
+    "ps2",
+    "emulation",
+    "bazzite",
+    "launcher"
+  ],
+  "author": "Arqa Launcher",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^26.6.10"
+  },
+  "allowScripts": {
+    "electron@26.6.10": true
+  }
+}
