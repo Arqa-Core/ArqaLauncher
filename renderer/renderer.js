@@ -5,14 +5,45 @@ const menuItems = [
   { label: 'Home', icon: './assets/home.png', description: 'Dashboard' },
   { label: 'Library', icon: './assets/folder.png', description: 'Games' },
   { label: 'Launch', icon: './assets/playlists.png', description: 'Run' },
-  { label: 'Settings', icon: './assets/settings.png', description: 'Options' }
+  { label: 'Settings', icon: './assets/settings.png', description: 'Options' },
+  { label: 'Power', icon: './assets/power.png', description: 'System' }
 ];
+
+const PLATFORM_LABELS = {
+  ps1: 'PlayStation',
+  ps2: 'PlayStation 2',
+  psp: 'PSP',
+  gamecube: 'GameCube',
+  wii: 'Wii',
+  snes: 'SNES',
+  nes: 'NES',
+  n64: 'Nintendo 64',
+  genesis: 'Genesis',
+  gba: 'Game Boy Advance',
+  gb: 'Game Boy',
+  arcade: 'Arcade',
+  dreamcast: 'Dreamcast',
+  switch: 'Switch',
+  unknown: 'Unknown system'
+};
+
+const PLATFORM_ICONS = {
+  ps1: '🎮', ps2: '🎮', psp: '🕹️', gamecube: '🟣', wii: '⚪', snes: '🟪', nes: '🔲',
+  n64: '🟩', genesis: '🟥', gba: '🟦', gb: '🟨', arcade: '👾', dreamcast: '🌀',
+  switch: '🔴', unknown: '🎮'
+};
+
+const POWER_LABELS = {
+  quit: 'Quit Launcher',
+  restart: 'Restart Arqa',
+  sleep: 'Sleep',
+  shutdown: 'Shut Down'
+};
 
 const App = () => {
   const [activeSection, setActiveSection] = useState('Home');
   const [focusArea, setFocusArea] = useState('menu');
   const [subIndex, setSubIndex] = useState(0);
-  const [focusedGameIndex, setFocusedGameIndex] = useState(0);
   const [bazzitePath, setBazzitePath] = useState(null);
   const [library, setLibrary] = useState(null);
   const [selectedRom, setSelectedRom] = useState(null);
@@ -22,32 +53,42 @@ const App = () => {
   const [consoleState, setConsoleState] = useState('Awaiting launch');
   const [logExpanded, setLogExpanded] = useState(false);
   const [clock, setClock] = useState(new Date());
+  const [useGamescope, setUseGamescope] = useState(true);
+  const [recentlyPlayed, setRecentlyPlayed] = useState([]);
+  const [pendingPower, setPendingPower] = useState(null);
 
   const activeSectionRef = useRef(activeSection);
   const focusAreaRef = useRef(focusArea);
   const subIndexRef = useRef(subIndex);
-  const focusedGameRef = useRef(focusedGameIndex);
   const libraryRef = useRef(library);
   const selectedRomRef = useRef(selectedRom);
   const bazzitePathRef = useRef(bazzitePath);
+  const useGamescopeRef = useRef(useGamescope);
+  const statusRef = useRef(status);
   const menuMusicRef = useRef(null);
   const navSoundRef = useRef(null);
   const startupSoundRef = useRef(null);
   const menuBarRef = useRef(null);
   const lastGamepadState = useRef([]);
   const gamepadRAF = useRef(null);
+  const pendingPowerTimeout = useRef(null);
 
+  useEffect(() => { activeSectionRef.current = activeSection; }, [activeSection]);
+  useEffect(() => { focusAreaRef.current = focusArea; }, [focusArea]);
+  useEffect(() => { subIndexRef.current = subIndex; }, [subIndex]);
+  useEffect(() => { libraryRef.current = library; }, [library]);
+  useEffect(() => { selectedRomRef.current = selectedRom; }, [selectedRom]);
+  useEffect(() => { bazzitePathRef.current = bazzitePath; }, [bazzitePath]);
+  useEffect(() => { useGamescopeRef.current = useGamescope; }, [useGamescope]);
+  useEffect(() => { statusRef.current = status; }, [status]);
+
+  // Reset any armed power confirmation when leaving the Power section.
   useEffect(() => {
-    activeSectionRef.current = activeSection;
+    if (activeSection !== 'Power' && pendingPower) {
+      setPendingPower(null);
+      clearTimeout(pendingPowerTimeout.current);
+    }
   }, [activeSection]);
-
-  useEffect(() => {
-    focusAreaRef.current = focusArea;
-  }, [focusArea]);
-
-  useEffect(() => {
-    subIndexRef.current = subIndex;
-  }, [subIndex]);
 
   // PS3-style clock, top right of the XMB
   useEffect(() => {
@@ -56,9 +97,7 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    if (!window.Audio) {
-      return;
-    }
+    if (!window.Audio) return;
 
     navSoundRef.current = new Audio('../Assets/nav.mp3');
     navSoundRef.current.volume = 0.16;
@@ -100,7 +139,6 @@ const App = () => {
       audio.play().catch(() => {});
       return;
     }
-
     if (window.Audio && fallbackSrc) {
       const clip = new Audio(fallbackSrc);
       clip.volume = volume;
@@ -111,22 +149,6 @@ const App = () => {
   const playNavigationSound = () => playAudioClip(navSoundRef, '../Assets/nav.mp3', 0.16);
   const playSelectSound = () => playAudioClip(navSoundRef, '../Assets/nav.mp3', 0.20);
   const playBackSound = () => playAudioClip(navSoundRef, '../Assets/nav.mp3', 0.12);
-
-  useEffect(() => {
-    focusedGameRef.current = focusedGameIndex;
-  }, [focusedGameIndex]);
-
-  useEffect(() => {
-    libraryRef.current = library;
-  }, [library]);
-
-  useEffect(() => {
-    selectedRomRef.current = selectedRom;
-  }, [selectedRom]);
-
-  useEffect(() => {
-    bazzitePathRef.current = bazzitePath;
-  }, [bazzitePath]);
 
   useEffect(() => {
     if (!menuBarRef.current) return;
@@ -141,22 +163,46 @@ const App = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  const appendConsole = (line) => {
+    setConsoleLog((current) => [...current.slice(-199), String(line)]);
+  };
+
+  // Load persisted settings + wire process events from the Arqa system API.
   useEffect(() => {
-    if (!window.bazziteAPI) {
-      appendConsole('Warning: Bazzite API not available.');
+    if (!window.arqaAPI) {
+      appendConsole('Warning: Arqa system API not available — running in preview mode.');
       return;
     }
 
-    appendConsole('Bazzite API is available.');
+    (async () => {
+      const loaded = await window.arqaAPI.getSettings();
+      if (!loaded) return;
 
-    window.bazziteAPI.onOutput((data) => {
-      appendConsole(data.toString().trim());
-    });
+      if (loaded.bazzitePath) {
+        setBazzitePath(loaded.bazzitePath);
+        setStatus('Bazzite ready');
+      }
+      setUseGamescope(loaded.useGamescope !== false);
+      setRecentlyPlayed(loaded.recentlyPlayed || []);
 
-    window.bazziteAPI.onExit((code) => {
-      appendConsole(`Bazzite exited with code ${code}`);
-      setStatus('Idle');
+      if (loaded.libraryFolder) {
+        const result = await window.arqaAPI.rescanLibrary(loaded.libraryFolder);
+        if (result && !result.error) {
+          setLibrary(result);
+          appendConsole(`Restored library: ${result.roms.length} title(s) from ${result.folderPath}`);
+        } else if (result?.error) {
+          appendConsole(result.error);
+        }
+      }
+    })();
+
+    window.arqaAPI.onOutput((data) => appendConsole(data.toString().trim()));
+    window.arqaAPI.onExit(async (code) => {
+      appendConsole(`Process exited with code ${code}`);
+      setStatus(code === 0 || code === null ? 'Idle' : 'Stopped');
       setConsoleState('Awaiting launch');
+      const refreshed = await window.arqaAPI.getSettings();
+      setRecentlyPlayed(refreshed?.recentlyPlayed || []);
     });
   }, []);
 
@@ -168,7 +214,6 @@ const App = () => {
       const currentSection = activeSectionRef.current;
       const currentItems = buildSectionItems({ label: currentSection });
       const itemCount = currentItems.length;
-      const gameCount = libraryRef.current?.roms?.length || 0;
 
       switch (input) {
         case 'ArrowLeft':
@@ -211,7 +256,7 @@ const App = () => {
             setSubIndex((prev) => Math.min(prev + 1, itemCount - 1));
           }
           break;
-        case 'Enter':
+        case 'Enter': {
           if (currentFocus === 'submenu') {
             const item = currentItems[subIndexRef.current];
             if (item?.action && !item.disabled) {
@@ -220,6 +265,7 @@ const App = () => {
             }
           }
           break;
+        }
         case 'Back':
         case 'Escape':
           playBackSound();
@@ -246,24 +292,12 @@ const App = () => {
         pressed.forEach((isPressed, index) => {
           if (isPressed && !lastGamepadState.current[index]) {
             switch (index) {
-              case 12:
-                handleInput('ArrowUp');
-                break;
-              case 13:
-                handleInput('ArrowDown');
-                break;
-              case 14:
-                handleInput('ArrowLeft');
-                break;
-              case 15:
-                handleInput('ArrowRight');
-                break;
-              case 0:
-                handleInput('Enter');
-                break;
-              case 1:
-                handleInput('Escape');
-                break;
+              case 12: handleInput('ArrowUp'); break;
+              case 13: handleInput('ArrowDown'); break;
+              case 14: handleInput('ArrowLeft'); break;
+              case 15: handleInput('ArrowRight'); break;
+              case 0: handleInput('Enter'); break;
+              case 1: handleInput('Escape'); break;
             }
           }
         });
@@ -289,130 +323,243 @@ const App = () => {
       window.removeEventListener('pointerdown', disableMouse, true);
       window.removeEventListener('mousedown', disableMouse, true);
       window.removeEventListener('contextmenu', disableMouse, true);
-      if (gamepadRAF.current) {
-        cancelAnimationFrame(gamepadRAF.current);
-      }
+      if (gamepadRAF.current) cancelAnimationFrame(gamepadRAF.current);
     };
   }, []);
 
-  const appendConsole = (line) => {
-    setConsoleLog((current) => [...current, line]);
-  };
-
   const chooseBazzite = async () => {
-    if (!window.bazziteAPI) return;
-    const selected = await window.bazziteAPI.selectBazziteExecutable();
-    if (selected) {
-      setBazzitePath(selected);
-      setStatus('Bazzite ready');
-      appendConsole(`Bazzite executable set to: ${selected}`);
-    }
-  };
-
-  const chooseFolder = async () => {
-    if (!window.bazziteAPI) return;
-    const result = await window.bazziteAPI.selectRomFolder();
-    if (!result) {
+    if (!window.arqaAPI) return;
+    const selected = await window.arqaAPI.selectBazziteExecutable();
+    if (!selected) return;
+    if (selected.error) {
+      appendConsole(selected.error);
       return;
     }
-    setLibrary(result);
-    setSubIndex(0);
-    setFocusedGameIndex(0);
-    appendConsole(`Loaded library from: ${result.folderPath}`);
+    setBazzitePath(selected);
+    setStatus('Bazzite ready');
+    appendConsole(`Bazzite executable set to: ${selected}`);
   };
 
-  const launchRom = async (rom) => {
-    if (!bazzitePath) {
+  const loadLibrary = async (forcedPath) => {
+    if (!window.arqaAPI) return;
+    const result = forcedPath
+      ? await window.arqaAPI.rescanLibrary(forcedPath)
+      : await window.arqaAPI.selectRomFolder();
+
+    if (!result) return;
+    if (result.error) {
+      appendConsole(result.error);
+      return;
+    }
+
+    setLibrary(result);
+    setSubIndex(0);
+    appendConsole(`Loaded ${result.roms.length} title(s) from: ${result.folderPath}`);
+  };
+
+  const refreshRecentlyPlayed = async () => {
+    if (!window.arqaAPI) return;
+    const settingsNow = await window.arqaAPI.getSettings();
+    setRecentlyPlayed(settingsNow?.recentlyPlayed || []);
+  };
+
+  const launchPath = async (romPath, label) => {
+    if (!bazzitePathRef.current) {
       appendConsole('Please set the Bazzite executable first.');
       return;
     }
-
-    if (!library) {
-      appendConsole('Please choose a game folder first.');
+    if (!window.arqaAPI) {
+      appendConsole('Launch failed: Arqa system API not available.');
+      setStatus('Launch failed');
+      setConsoleState('Error');
       return;
     }
 
-    const romPath = `${library.folderPath.replace(/\\/g, '/')}/${rom}`;
-    setSelectedRom(rom);
+    setSelectedRom(label);
     setStatus('Launching...');
     setConsoleState('Starting Bazzite');
 
-    if (!window.bazziteAPI) {
-      appendConsole('Launch failed: Bazzite API not available.');
-      setStatus('Launch failed');
-      setConsoleState('Error');
-      return;
-    }
-
-    const response = await window.bazziteAPI.launchBazzite({
-      executablePath: bazzitePath,
+    const response = await window.arqaAPI.launchBazzite({
+      executablePath: bazzitePathRef.current,
       romPath,
-      extraArgs: []
+      extraArgs: [],
+      useGamescope: useGamescopeRef.current
     });
 
-    if (!response.success) {
-      appendConsole(`Launch failed: ${response.error}`);
+    if (!response?.success) {
+      appendConsole(`Launch failed: ${response?.error || 'Unknown error'}`);
       setStatus('Launch failed');
       setConsoleState('Error');
       return;
     }
 
-    if (window.bazziteAPI?.exitFullscreen) {
-      window.bazziteAPI.exitFullscreen();
-    }
-
-    appendConsole(`Launching ROM: ${romPath}`);
+    appendConsole(`Launching: ${romPath}${response.usedGamescope ? ' (via gamescope)' : ' (direct — gamescope not used)'}`);
     setStatus('Running');
+    setConsoleState('Game running');
+    window.arqaAPI.exitFullscreen?.();
+    refreshRecentlyPlayed();
+  };
+
+  const launchRom = (rom) => {
+    if (!libraryRef.current) {
+      appendConsole('Please choose a game folder first.');
+      return;
+    }
+    const romPath = `${libraryRef.current.folderPath.replace(/\\/g, '/')}/${rom}`;
+    launchPath(romPath, rom);
   };
 
   const launchSelected = () => {
-    if (selectedRom) {
-      launchRom(selectedRom);
+    if (selectedRomRef.current) {
+      launchRom(selectedRomRef.current);
       return;
     }
-
-    const rom = library?.roms?.[0];
+    const rom = libraryRef.current?.roms?.[0];
     if (rom) {
       launchRom(rom);
       return;
     }
+    loadLibrary();
+  };
 
-    chooseFolder();
+  const stopGame = async () => {
+    if (!window.arqaAPI) return;
+    const res = await window.arqaAPI.stopGame();
+    if (res?.success) {
+      appendConsole('Game stopped by user.');
+    } else if (res?.error) {
+      appendConsole(res.error);
+    }
+  };
+
+  const toggleGamescope = async () => {
+    const next = !useGamescope;
+    setUseGamescope(next);
+    await window.arqaAPI?.saveSettings({ useGamescope: next });
+    appendConsole(`Gamescope wrapping ${next ? 'enabled' : 'disabled'}.`);
+  };
+
+  const clearRecentlyPlayed = async () => {
+    setRecentlyPlayed([]);
+    await window.arqaAPI?.saveSettings({ recentlyPlayed: [] });
+    appendConsole('Recently played list cleared.');
+  };
+
+  const confirmOrRun = (action, run) => {
+    if (pendingPower === action) {
+      clearTimeout(pendingPowerTimeout.current);
+      setPendingPower(null);
+      run();
+    } else {
+      playSelectSound();
+      setPendingPower(action);
+      clearTimeout(pendingPowerTimeout.current);
+      pendingPowerTimeout.current = setTimeout(() => setPendingPower(null), 4000);
+    }
+  };
+
+  const runPowerAction = (action) => {
+    appendConsole(`Sending power action: ${action}`);
+    window.arqaAPI?.systemPower(action).then((res) => {
+      if (res && !res.success) appendConsole(res.error || `Failed to ${action}.`);
+    });
   };
 
   const buildSectionItems = (section) => {
     switch (section.label) {
-      case 'Home':
-        return [
+      case 'Home': {
+        const items = [
           { id: 'set-bazzite', icon: '🧩', label: 'Set Bazzite', description: 'Select the emulator executable on disk.', action: chooseBazzite },
-          { id: 'browse-library', icon: '📁', label: 'Browse Library', description: 'Choose the folder that holds your ROMs.', action: chooseFolder },
+          { id: 'browse-library', icon: '📁', label: 'Browse Library', description: 'Choose the folder that holds your ROMs.', action: () => loadLibrary() },
           { id: 'selected-rom', icon: '🎯', label: 'Selected ROM', description: selectedRom || 'No ROM selected yet.', disabled: true },
           { id: 'status', icon: '⚡', label: 'Status', description: status, disabled: true }
         ];
-      case 'Library':
+        recentlyPlayed.slice(0, 3).forEach((romPath, index) => {
+          const name = romPath.split('/').pop();
+          items.push({
+            id: `recent-${index}`,
+            icon: '🕘',
+            label: name,
+            description: 'Recently played — press Enter to relaunch.',
+            action: () => launchPath(romPath, name)
+          });
+        });
+        return items;
+      }
+      case 'Library': {
         if (!library?.roms?.length) {
           return [{ id: 'empty', icon: '📂', label: 'Library Empty', description: 'Pick a folder to load games.', disabled: true }];
         }
-        return library.roms.map((rom) => ({
-          id: rom,
-          icon: '🎮',
-          label: rom,
-          description: 'Press ✕ / Enter to launch this title.',
-          action: () => launchRom(rom)
-        }));
-      case 'Launch':
-        return [
+        return library.roms.map((rom) => {
+          const platform = library.platforms?.[rom] || 'unknown';
+          return {
+            id: rom,
+            icon: PLATFORM_ICONS[platform] || '🎮',
+            label: rom,
+            description: `${PLATFORM_LABELS[platform] || 'Unknown system'} · Press ✕ / Enter to launch`,
+            action: () => launchRom(rom)
+          };
+        });
+      }
+      case 'Launch': {
+        const items = [];
+        if (status === 'Running') {
+          items.push({ id: 'stop', icon: '⏹️', label: 'Stop Game', description: 'Terminate the currently running game.', action: stopGame });
+        }
+        items.push(
           { id: 'launch', icon: '▶️', label: 'Launch Selected', description: selectedRom ? `Resume "${selectedRom}" with Bazzite.` : 'No game selected yet.', action: launchSelected, disabled: !selectedRom && !library?.roms?.length },
           { id: 'select-bazzite', icon: '🧩', label: 'Select Bazzite', description: 'Choose the emulator executable.', action: chooseBazzite },
-          { id: 'pick-folder', icon: '📁', label: 'Pick Folder', description: 'Load your game library from disk.', action: chooseFolder }
-        ];
+          { id: 'pick-folder', icon: '📁', label: 'Pick Folder', description: 'Load your game library from disk.', action: () => loadLibrary() }
+        );
+        return items;
+      }
       case 'Settings':
         return [
           { id: 'navigation', icon: '🕹️', label: 'Navigation', description: 'Use arrow keys or the D-pad to move.', disabled: true },
           { id: 'confirm', icon: '✅', label: 'Confirm', description: 'Press Enter or ✕ to select.', disabled: true },
           { id: 'back', icon: '↩️', label: 'Back', description: 'Press Escape or ◯ to return.', disabled: true },
-          { id: 'fullscreen', icon: '🖥️', label: 'Fullscreen', description: 'Launcher stays fullscreen until a game runs.', disabled: true }
+          {
+            id: 'gamescope',
+            icon: useGamescope ? '🟢' : '⚪',
+            label: 'Use Gamescope',
+            description: useGamescope
+              ? 'Games launch inside a gamescope session (recommended on Arqa).'
+              : 'Games launch directly, without gamescope.',
+            action: toggleGamescope
+          },
+          {
+            id: 'rescan',
+            icon: '🔁',
+            label: 'Rescan Library',
+            description: library ? `Re-check "${library.folderPath}" for new titles.` : 'No folder selected yet.',
+            action: () => library && loadLibrary(library.folderPath),
+            disabled: !library
+          },
+          {
+            id: 'clear-recent',
+            icon: '🧹',
+            label: 'Clear Recently Played',
+            description: recentlyPlayed.length ? `${recentlyPlayed.length} entr${recentlyPlayed.length === 1 ? 'y' : 'ies'} stored.` : 'Nothing to clear.',
+            action: clearRecentlyPlayed,
+            disabled: !recentlyPlayed.length
+          }
         ];
+      case 'Power':
+        return ['quit', 'restart', 'sleep', 'shutdown'].map((action) => ({
+          id: action,
+          icon: { quit: '🚪', restart: '🔄', sleep: '🌙', shutdown: '⏻' }[action],
+          label: pendingPower === action ? 'Press again to confirm' : POWER_LABELS[action],
+          description: pendingPower === action
+            ? 'This cannot be undone once confirmed.'
+            : {
+                quit: 'Closes the Arqa launcher.',
+                restart: 'Reboots the system.',
+                sleep: 'Suspends the system.',
+                shutdown: 'Powers off the system.'
+              }[action],
+          armed: pendingPower === action,
+          action: () => confirmOrRun(action, () => runPowerAction(action))
+        }));
       default:
         return [];
     }
@@ -421,7 +568,7 @@ const App = () => {
   const activeIndex = Math.max(menuItems.findIndex((item) => item.label === activeSection), 0);
   const columnLeftPercent = ((activeIndex + 0.5) / menuItems.length) * 100;
 
-  const navItems = menuItems.map((item, index) =>
+  const navItems = menuItems.map((item) =>
     h('div', {
       key: item.label,
       className: `xmb-title ${activeSection === item.label ? 'active' : ''} ${focusArea === 'menu' && activeSection === item.label ? 'focused' : ''}`,
@@ -450,7 +597,7 @@ const App = () => {
 
     return h('div', {
       key: item.id,
-      className: `xmb-sub-item ${focusArea === 'submenu' && isFocused ? 'focused' : ''} ${item.disabled ? 'disabled' : ''}`,
+      className: `xmb-sub-item ${focusArea === 'submenu' && isFocused ? 'focused' : ''} ${item.disabled ? 'disabled' : ''} ${item.armed ? 'armed' : ''}`,
       style: { transform: `scale(${isFocused ? 1.08 : scale})`, opacity: isFocused ? 1 : opacity },
       onClick: () => {
         if (item.disabled) return;
@@ -467,6 +614,14 @@ const App = () => {
 
   const timeLabel = clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const dateLabel = clock.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+
+  const statusColor = status === 'Running'
+    ? '#46e08a'
+    : (status === 'Launch failed' || status === 'Error')
+      ? '#ff5c7a'
+      : status === 'Launching...'
+        ? '#ffd166'
+        : '#8a5cff';
 
   return h('div', null,
     booting && h('div', { className: 'startup-overlay' },
@@ -519,7 +674,7 @@ const App = () => {
         onClick: () => setLogExpanded((prev) => !prev)
       },
         h('div', { className: 'status-line' },
-          h('span', { className: 'status-dot' }),
+          h('span', { className: 'status-dot', style: { background: statusColor, boxShadow: `0 0 10px ${statusColor}` } }),
           h('span', null, status),
           h('span', { className: 'status-sep' }, '·'),
           h('span', null, consoleState),

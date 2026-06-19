@@ -337,6 +337,14 @@ body {
   color: #b6a8e8;
 }
 
+.xmb-sub-item.armed {
+  background: linear-gradient(90deg, rgba(255, 92, 122, 0.22), transparent);
+}
+
+.xmb-sub-item.armed .xmb-sub-label {
+  color: #ff8a93;
+}
+
 /* ---------- Preview panel: large context for the focused item ---------- */
 
 .xmb-preview {
