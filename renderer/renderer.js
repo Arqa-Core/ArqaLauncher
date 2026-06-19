@@ -20,6 +20,8 @@ const App = () => {
   const [status, setStatus] = useState('Idle');
   const [consoleLog, setConsoleLog] = useState(['Ready.']);
   const [consoleState, setConsoleState] = useState('Awaiting launch');
+  const [logExpanded, setLogExpanded] = useState(false);
+  const [clock, setClock] = useState(new Date());
 
   const activeSectionRef = useRef(activeSection);
   const focusAreaRef = useRef(focusArea);
@@ -46,6 +48,12 @@ const App = () => {
   useEffect(() => {
     subIndexRef.current = subIndex;
   }, [subIndex]);
+
+  // PS3-style clock, top right of the XMB
+  useEffect(() => {
+    const tick = setInterval(() => setClock(new Date()), 30000);
+    return () => clearInterval(tick);
+  }, []);
 
   useEffect(() => {
     if (!window.Audio) {
@@ -189,13 +197,18 @@ const App = () => {
           break;
         case 'ArrowUp':
           playNavigationSound();
-          setFocusArea('menu');
-          setSubIndex(0);
+          if (currentFocus === 'submenu' && subIndexRef.current === 0) {
+            setFocusArea('menu');
+          } else if (currentFocus === 'submenu') {
+            setSubIndex((prev) => Math.max(prev - 1, 0));
+          }
           break;
         case 'ArrowDown':
           playNavigationSound();
-          if (itemCount > 0) {
+          if (currentFocus === 'menu' && itemCount > 0) {
             setFocusArea('submenu');
+          } else if (currentFocus === 'submenu' && itemCount > 0) {
+            setSubIndex((prev) => Math.min(prev + 1, itemCount - 1));
           }
           break;
         case 'Enter':
@@ -210,8 +223,12 @@ const App = () => {
         case 'Back':
         case 'Escape':
           playBackSound();
-          setActiveSection('Home');
-          setFocusArea('menu');
+          if (focusAreaRef.current === 'submenu') {
+            setFocusArea('menu');
+          } else {
+            setActiveSection('Home');
+            setFocusArea('menu');
+          }
           break;
       }
     };
@@ -363,233 +380,154 @@ const App = () => {
     chooseFolder();
   };
 
-  const currentGames = library?.roms || [];
-  const gameGridChildren = currentGames.length === 0
-    ? [
-        h('div', { className: 'placeholder-card' },
-          h('p', null, 'No compatible game files found. Pick a folder with ISO/PBP/CUE/ELF.')
-        )
-      ]
-    : currentGames.map((rom, index) =>
-        h('div', {
-          key: rom,
-          className: `game-card ${focusArea === 'library' && focusedGameIndex === index ? 'focused' : ''}`,
-          onClick: () => {
-            setFocusedGameIndex(index);
-            launchRom(rom);
-          }
-        },
-          h('h3', null, rom),
-          h('p', null, 'Click to launch with Bazzite'),
-          h('span', { className: 'launch-prompt' }, '▶')
-        )
-      );
-
   const buildSectionItems = (section) => {
     switch (section.label) {
       case 'Home':
         return [
-          { id: 'set-bazzite', icon: '🧩', label: 'Set Bazzite', description: 'Select the emulator exe', action: chooseBazzite },
-          { id: 'browse-library', icon: '📁', label: 'Browse Library', description: 'Load your game folder', action: chooseFolder },
-          { id: 'selected-rom', icon: '🎯', label: 'Selected ROM', description: selectedRom || 'None', disabled: true },
+          { id: 'set-bazzite', icon: '🧩', label: 'Set Bazzite', description: 'Select the emulator executable on disk.', action: chooseBazzite },
+          { id: 'browse-library', icon: '📁', label: 'Browse Library', description: 'Choose the folder that holds your ROMs.', action: chooseFolder },
+          { id: 'selected-rom', icon: '🎯', label: 'Selected ROM', description: selectedRom || 'No ROM selected yet.', disabled: true },
           { id: 'status', icon: '⚡', label: 'Status', description: status, disabled: true }
         ];
       case 'Library':
         if (!library?.roms?.length) {
-          return [{ id: 'empty', icon: '📂', label: 'Library Empty', description: 'Pick a folder to load games', disabled: true }];
+          return [{ id: 'empty', icon: '📂', label: 'Library Empty', description: 'Pick a folder to load games.', disabled: true }];
         }
         return library.roms.map((rom) => ({
           id: rom,
           icon: '🎮',
           label: rom,
-          description: 'Press A / Enter to launch',
+          description: 'Press ✕ / Enter to launch this title.',
           action: () => launchRom(rom)
         }));
       case 'Launch':
         return [
-          { id: 'launch', icon: '▶️', label: 'Launch Selected', description: selectedRom || 'No game selected', action: launchSelected, disabled: !selectedRom && !library?.roms?.length },
-          { id: 'select-bazzite', icon: '🧩', label: 'Select Bazzite', description: 'Choose emulator executable', action: chooseBazzite },
-          { id: 'pick-folder', icon: '📁', label: 'Pick Folder', description: 'Load your game library', action: chooseFolder }
+          { id: 'launch', icon: '▶️', label: 'Launch Selected', description: selectedRom ? `Resume "${selectedRom}" with Bazzite.` : 'No game selected yet.', action: launchSelected, disabled: !selectedRom && !library?.roms?.length },
+          { id: 'select-bazzite', icon: '🧩', label: 'Select Bazzite', description: 'Choose the emulator executable.', action: chooseBazzite },
+          { id: 'pick-folder', icon: '📁', label: 'Pick Folder', description: 'Load your game library from disk.', action: chooseFolder }
         ];
       case 'Settings':
         return [
-          { id: 'navigation', icon: '🕹️', label: 'Navigation', description: 'Use arrows or D-pad', disabled: true },
-          { id: 'confirm', icon: '✅', label: 'Confirm', description: 'Press Enter or A', disabled: true },
-          { id: 'back', icon: '↩️', label: 'Back', description: 'Press Escape or B', disabled: true },
-          { id: 'fullscreen', icon: '🖥️', label: 'Fullscreen', description: 'Launcher stays fullscreen until launch', disabled: true }
+          { id: 'navigation', icon: '🕹️', label: 'Navigation', description: 'Use arrow keys or the D-pad to move.', disabled: true },
+          { id: 'confirm', icon: '✅', label: 'Confirm', description: 'Press Enter or ✕ to select.', disabled: true },
+          { id: 'back', icon: '↩️', label: 'Back', description: 'Press Escape or ◯ to return.', disabled: true },
+          { id: 'fullscreen', icon: '🖥️', label: 'Fullscreen', description: 'Launcher stays fullscreen until a game runs.', disabled: true }
         ];
       default:
         return [];
     }
   };
 
-  const sectionContent = () => {
-    switch (activeSection) {
-      case 'Library':
-        return h('div', null,
-          h('section', { className: 'card library-panel' },
-            h('div', { className: 'panel-header' },
-              h('div', null,
-                h('h2', null, 'Game Library'),
-                h('p', { className: 'panel-subtitle' }, library ? `${currentGames.length} titles available` : 'Pick a folder to populate your library')
-              ),
-              h('button', { className: 'secondary-button', onClick: chooseFolder }, 'Reload')
-            ),
-            h('div', { className: `game-grid ${currentGames.length === 0 ? 'empty' : ''}` },
-              ...gameGridChildren
-            )
-          )
-        );
-      case 'Launch':
-        return h('section', { className: 'card launch-panel' },
-          h('div', { className: 'panel-header' },
-            h('div', null,
-              h('h2', null, 'Quick Launch'),
-              h('p', { className: 'panel-subtitle' }, 'Use controller or keyboard to fire up a game fast')
-            )
-          ),
-          h('div', { className: 'launch-body' },
-            h('div', { className: 'launch-info' },
-              h('div', null, h('span', null, 'Selected ROM')),
-              h('strong', null, selectedRom || 'No ROM selected'),
-              h('div', null, h('span', null, 'Bazzite EXE')),
-              h('strong', null, bazzitePath || 'Not set')
-            ),
-            h('div', { className: 'launch-actions' },
-              h('button', { className: 'action-button', onClick: chooseBazzite }, 'Select Bazzite'),
-              h('button', { className: 'action-button', onClick: chooseFolder }, 'Pick Folder'),
-              h('button', { className: 'secondary-button', onClick: launchSelected }, 'Launch')
-            )
-          )
-        );
-      case 'Settings':
-        return h('section', { className: 'card settings-panel' },
-          h('div', { className: 'panel-header' },
-            h('div', null,
-              h('h2', null, 'Settings'),
-              h('p', { className: 'panel-subtitle' }, 'Controller and display preferences')
-            )
-          ),
-          h('div', { className: 'settings-grid' },
-            h('div', { className: 'settings-item' },
-              h('h3', null, 'Navigation'),
-              h('p', null, 'Use arrow keys or D-pad to move between categories and items.')
-            ),
-            h('div', { className: 'settings-item' },
-              h('h3', null, 'Select / Back'),
-              h('p', null, 'Press Enter or A to confirm, Escape or B to return home.')
-            ),
-            h('div', { className: 'settings-item' },
-              h('h3', null, 'Focus'),
-              h('p', null, 'Selected items are highlighted to help navigation feel like XMB.')
-            )
-          )
-        );
-      default:
-        return h('div', null,
-          h('section', { className: 'hero card' },
-            h('div', { className: 'hero-copy' },
-              h('h1', null, 'PlayStation XMB Style'),
-              h('p', null, 'Modern frontend for Bazzite with a dark violet XMB-inspired dashboard, quick game access, and responsive controls.')
-            ),
-            h('div', { className: 'hero-controls' },
-              h('button', { className: 'action-button', onClick: chooseBazzite }, 'Set Bazzite EXE'),
-              h('button', { className: 'action-button', onClick: chooseFolder }, 'Browse Game Folder')
-            )
-          )
-        );
-    }
-  };
+  const activeIndex = Math.max(menuItems.findIndex((item) => item.label === activeSection), 0);
+  const columnLeftPercent = ((activeIndex + 0.5) / menuItems.length) * 100;
 
-  const navItems = menuItems.map((item) =>
+  const navItems = menuItems.map((item, index) =>
     h('div', {
       key: item.label,
       className: `xmb-title ${activeSection === item.label ? 'active' : ''} ${focusArea === 'menu' && activeSection === item.label ? 'focused' : ''}`,
       onClick: () => {
-        activateAudio();
         playNavigationSound();
         setActiveSection(item.label);
         setFocusArea('menu');
         setSubIndex(0);
       }
     },
-      h('img', { className: 'xmb-title-icon', src: item.icon, alt: item.label }),
+      h('div', { className: 'xmb-title-icon-wrap' },
+        h('img', { className: 'xmb-title-icon', src: item.icon, alt: item.label })
+      ),
       h('p', { className: 'titletext' }, item.label)
     )
   );
 
   const sectionItems = buildSectionItems(menuItems.find((item) => item.label === activeSection) || menuItems[0]);
+  const previewItem = sectionItems[subIndex] || sectionItems[0];
 
-  const submenuItems = sectionItems.map((item, index) =>
-    h('div', {
+  const submenuItems = sectionItems.map((item, index) => {
+    const distance = Math.abs(index - subIndex);
+    const scale = Math.max(1 - distance * 0.1, 0.8);
+    const opacity = Math.max(1 - distance * 0.22, 0.4);
+    const isFocused = subIndex === index;
+
+    return h('div', {
       key: item.id,
-      className: `submenu ${focusArea === 'submenu' && subIndex === index ? 'active' : ''} ${item.disabled ? 'disabled' : ''}`,
+      className: `xmb-sub-item ${focusArea === 'submenu' && isFocused ? 'focused' : ''} ${item.disabled ? 'disabled' : ''}`,
+      style: { transform: `scale(${isFocused ? 1.08 : scale})`, opacity: isFocused ? 1 : opacity },
       onClick: () => {
         if (item.disabled) return;
-        activateAudio();
         playSelectSound();
         setSubIndex(index);
         setFocusArea('submenu');
         item.action?.();
       }
     },
-      h('div', { className: 'submenu-icon' }, item.icon),
-      h('div', { className: 'submenu-body' },
-        h('p', { className: 'submenu-title' }, item.label),
-        h('p', { className: 'submenu-description' }, item.description)
-      )
-    )
-  );
+      h('span', { className: 'xmb-sub-icon' }, item.icon),
+      h('span', { className: 'xmb-sub-label' }, item.label)
+    );
+  });
+
+  const timeLabel = clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dateLabel = clock.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 
   return h('div', null,
     booting && h('div', { className: 'startup-overlay' },
       h('img', { className: 'startup-logo', src: './assets/ArqaLogo.png', alt: 'ARQA Logo' }),
       h('div', { className: 'startup-text' }, 'ARQA Launcher')
     ),
-    h('div', { className: 'window-frame' },
-      h('div', { className: 'metro-background' },
-        h('div', { className: 'metro-circle' }),
-        h('div', { className: 'metro-ring' }),
-        h('div', { className: 'metro-triangle' }),
-        h('div', { className: 'metro-square' }),
-        h('div', { className: 'metro-line' })
+    h('div', { className: 'xmb-stage' },
+      h('div', { className: 'xmb-waves' },
+        h('div', { className: 'wave wave-1' }),
+        h('div', { className: 'wave wave-2' }),
+        h('div', { className: 'wave wave-3' }),
+        h('div', { className: 'wave-glow' })
       ),
-      h('div', { className: 'titlebar' },
-        h('div', { className: 'title-left' },
+
+      h('div', { className: 'hud-top' },
+        h('div', { className: 'hud-brand' },
           h('img', { className: 'app-logo', src: './assets/ArqaLogo.png', alt: 'ARQA' }),
-          h('div', null,
-            h('span', { className: 'logo' }, 'ARQA'),
-            h('span', { className: 'subtitle' }, 'XMB Shell')
-          )
+          h('span', { className: 'logo' }, 'ARQA')
+        ),
+        h('div', { className: 'hud-clock' },
+          h('span', { className: 'hud-time' }, timeLabel),
+          h('span', { className: 'hud-date' }, dateLabel)
         )
       ),
-      h('div', { className: 'xmb-main', ref: menuBarRef },
+
+      h('div', { className: 'xmb-row', ref: menuBarRef },
         ...navItems
       ),
-      h('main', { className: 'content' },
-      h('section', { className: 'card xmb-panel' },
-        h('div', { className: 'panel-header' },
-          h('div', null,
-            h('p', { className: 'section-label' }, activeSection),
-            h('h2', null, menuItems.find((item) => item.label === activeSection)?.description)
-          ),
-          h('p', { className: 'panel-subtitle' }, 'Use D-pad / arrow keys and A / Enter to navigate')
-        ),
-        h('div', { className: 'xmb-contents' },
+
+      h('div', {
+        className: 'xmb-submenu-area',
+        style: { left: `${columnLeftPercent}%` }
+      },
+        h('div', { className: 'xmb-sub-column' },
           ...submenuItems
         )
       ),
-      h('section', { className: 'card console-panel' },
-        h('div', { className: 'panel-header' },
-          h('div', null,
-            h('h2', null, 'Console Output'),
-            h('p', { className: 'panel-subtitle' }, consoleState)
-          )
+
+      h('div', { className: 'xmb-preview' },
+        h('div', { className: 'preview-icon' }, previewItem?.icon || '🎮'),
+        h('div', { className: 'preview-text' },
+          h('p', { className: 'preview-eyebrow' }, activeSection),
+          h('h2', { className: 'preview-title' }, previewItem?.label || menuItems[activeIndex]?.description),
+          h('p', { className: 'preview-desc' }, previewItem?.description || menuItems[activeIndex]?.description)
+        )
+      ),
+
+      h('div', {
+        className: `status-bar ${logExpanded ? 'expanded' : ''}`,
+        onClick: () => setLogExpanded((prev) => !prev)
+      },
+        h('div', { className: 'status-line' },
+          h('span', { className: 'status-dot' }),
+          h('span', null, status),
+          h('span', { className: 'status-sep' }, '·'),
+          h('span', null, consoleState),
+          h('span', { className: 'status-hint' }, logExpanded ? 'Hide log ▾' : 'Show log ▸')
         ),
-        h('pre', { className: 'console-log' }, consoleLog.join('\n'))
+        logExpanded && h('pre', { className: 'console-log' }, consoleLog.join('\n'))
       )
     )
-  )
   );
 };
 
