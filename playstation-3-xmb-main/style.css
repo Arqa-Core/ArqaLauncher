@@ -1,0 +1,227 @@
+/* Reset en basis */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: black;
+    color: #dadada;
+    overflow: hidden;
+}
+
+/* Background video */
+.back-vid {
+    position: fixed;      /* fullscreen */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;    /* vul scherm netjes */
+    z-index: -1;          /* zet video achter alles */
+    opacity: 0.7;         /* optioneel dim */
+}
+
+/* Startup Logo */
+.title {
+    position: fixed;
+    top: 47%;
+    right: 6vw;
+    transform: translateY(-50%);
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 1s ease-in-out;
+}
+
+.title img.startuplogo {
+    width: 550px;
+}
+
+/* Warning scherm */
+.warning {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.2);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: left;
+    padding: 20px;
+    z-index: 20;
+    opacity: 0;
+    transition: opacity 1s ease-in-out;
+}
+.warninghead {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 15px;
+    text-align: left;
+}
+
+.warning {
+    opacity: 0;
+    color: #dadada;
+    text-shadow: 2px 2px 5px black;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    transition: all 300ms;
+}
+
+.warning p {
+    text-transform: uppercase;
+    font-size: 1.1rem;
+}
+
+/* XMB menu */
+#menu {
+    position: fixed;
+    top: 35%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 50px;
+    transition: transform 0.2s ease-in-out;
+}
+
+.xmb-main {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 50px;
+}
+
+/* XMB Titles (Users, Settings, Game etc.) */
+.xmb-title {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    text-align: center;
+    position: relative;
+}
+
+.xmb-title img {
+    width: 80px;
+    margin-bottom: 5px;
+    opacity: 0.5;
+    transition: transform 0.2s ease-in-out, opacity 0.2s ease-in-out;
+}
+
+.xmb-title.active img {
+    transform: scale(1.2);
+    opacity: 0.8;
+}
+
+.titletext {
+    font-size: 16px;
+    color: #fff;
+    display: none;
+}
+
+.xmb-title.active .titletext {
+    display: block;
+}
+
+/* Submenu’s */
+.xmb-contents {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    /* we'll translate in JS: x is horizontal, y is vertical scroll */
+    transform: translateX(-50%);
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    white-space: nowrap;
+    /* allow items to scroll within the title container */
+    transition: transform 0.3s ease-in-out;
+}
+
+.submenu {
+    /* all items are visible when the parent section is active */
+    align-items: center;
+    font-size: 14px;
+    color: #fff;
+    transition: opacity 0.2s ease-in-out, transform 0.2s ease-in-out;
+    flex-direction: row;
+}
+
+.submenu img {
+    width: 50px;
+    margin-right: 5px;
+}
+
+/* highlight selected submenu item */
+.submenu.active {
+    transform: scale(1.2);
+    opacity: 1;
+}
+
+@keyframes breathe {
+    0%, 100% { text-shadow: 0 0 3px rgba(255,255,255,0.6); }
+    50% { text-shadow: 0 0 14px rgba(255,255,255,0.8); }
+}
+
+.submenu.active p {
+    text-shadow: 1.5px 1.5px 10px rgba(255,255,255,0.8);
+    animation: breathe 1.3s infinite;
+}
+
+/* Clock */
+.clock {
+  opacity: 0;
+  position: absolute;
+  top: 5%;
+  left: 80%;
+  bottom: 0;
+  right: 0;
+  width: 5%;
+  color: white;
+  text-align: right;
+  font-size: 18px;
+  z-index: 3;
+}
+.clock .clock-container {
+  width: 400%;
+  border: 1px solid #dadada;
+  border-right: none;
+  border-radius: 3px;
+  padding-right: 0px 40px;
+}
+.clock .clock-container p {
+  letter-spacing: 1px;
+  margin-right: 20px;
+  text-shadow: 2px 2px 5px black;
+}
+
+/* Submenu hidden by default */
+.xmb-contents {
+    display: none;
+}
+
+.xmb-contents .submenu {
+    display: none;
+}
+
+/* Active section submenu visible - show as flex row */
+.xmb-title.active .xmb-contents {
+    display: flex;
+}
+
+.xmb-title.active .xmb-contents .submenu {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}

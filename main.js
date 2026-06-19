@@ -110,7 +110,8 @@ ipcMain.handle('launch-bazzite', async (_event, { executablePath, romPath, extra
 
 ipcMain.handle('close-window', () => {
   if (mainWindow) {
-    mainWindow.close();
+    // Disable programmatic close; only Alt+F4 should terminate the app.
+    return;
   }
 });
 
