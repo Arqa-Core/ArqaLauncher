@@ -13,6 +13,8 @@ function createWindow() {
     minHeight: 640,
     title: 'Arqa Launcher',
     frame: false,
+    fullscreen: true,
+    autoHideMenuBar: true,
     backgroundColor: '#05080f',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -115,6 +117,18 @@ ipcMain.handle('close-window', () => {
 ipcMain.handle('minimize-window', () => {
   if (mainWindow) {
     mainWindow.minimize();
+  }
+});
+
+ipcMain.handle('enter-fullscreen', () => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(true);
+  }
+});
+
+ipcMain.handle('exit-fullscreen', () => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(false);
   }
 });
 

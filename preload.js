@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('bazziteAPI', {
   closeWindow: () => ipcRenderer.invoke('close-window'),
   minimizeWindow: () => ipcRenderer.invoke('minimize-window'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('toggle-maximize-window'),
+  enterFullscreen: () => ipcRenderer.invoke('enter-fullscreen'),
+  exitFullscreen: () => ipcRenderer.invoke('exit-fullscreen'),
   onOutput: (callback) => ipcRenderer.on('bazzite-output', (_event, data) => callback(data)),
   onExit: (callback) => ipcRenderer.on('bazzite-exit', (_event, code) => callback(code))
 });
