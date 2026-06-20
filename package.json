@@ -5,8 +5,15 @@
   "main": "main.js",
   "scripts": {
     "start": "npx electron-forge start",
+    "debug": "node scripts/debug-launcher.js",
     "package": "npx electron-forge package",
-    "make": "npx electron-forge make"
+    "make": "npx electron-forge make",
+    "build": "node scripts/build.js",
+    "build:make": "node scripts/build.js --make",
+    "scan": "node scripts/scan-roms.js",
+    "validate": "node scripts/validate-setup.js",
+    "settings": "node scripts/show-settings.js",
+    "reset-settings": "node scripts/reset-settings.js"
   },
   "keywords": [
     "electron",

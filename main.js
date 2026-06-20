@@ -155,19 +155,26 @@ app.on('activate', () => {
 // ---------- Executable / library selection ----------
 
 ipcMain.handle('select-bazzite-executable', async () => {
+  const wasFullscreen = mainWindow?.isFullScreen();
+  if (wasFullscreen) mainWindow.setFullScreen(false);
+
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select Bazzite Executable',
     properties: ['openFile'],
     filters: [{ name: 'All Files', extensions: ['*'] }]
   });
 
+  if (wasFullscreen) mainWindow.setFullScreen(true);
+
   if (result.canceled || !result.filePaths.length) return null;
 
   const selected = result.filePaths[0];
-  try {
-    fs.accessSync(selected, fs.constants.X_OK);
-  } catch {
-    return { error: 'That file is not marked executable. Run "chmod +x" on it first.' };
+  if (process.platform !== 'win32') {
+    try {
+      fs.accessSync(selected, fs.constants.X_OK);
+    } catch {
+      return { error: `"${path.basename(selected)}" is not executable. Run: chmod +x "${selected}"` };
+    }
   }
 
   settings.bazzitePath = selected;
@@ -176,10 +183,15 @@ ipcMain.handle('select-bazzite-executable', async () => {
 });
 
 ipcMain.handle('select-rom-folder', async () => {
+  const wasFullscreen = mainWindow?.isFullScreen();
+  if (wasFullscreen) mainWindow.setFullScreen(false);
+
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select Game Folder',
     properties: ['openDirectory']
   });
+
+  if (wasFullscreen) mainWindow.setFullScreen(true);
 
   if (result.canceled || result.filePaths.length === 0) {
     return null;
