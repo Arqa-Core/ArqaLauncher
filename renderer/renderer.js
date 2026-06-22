@@ -1,7 +1,7 @@
 const { useState, useEffect, useRef, useMemo, useReducer } = React;
 const h = React.createElement;
 
-// ========== WEBGL WAVE INITIALIZATION ==========
+// ========== WEBGL WAVE RENDERER (PS3 XMB Style) ==========
 
 class WebGLWaveRenderer {
   constructor(canvas, theme = 'dark') {
@@ -38,60 +38,36 @@ class WebGLWaveRenderer {
       
       void main() {
         vec2 uv = gl_FragCoord.xy / uResolution;
-        vec2 sampleUv = uv;
+        float time = uTime * 0.15; // slower, more elegant movement
         
-        // Multi-octave Perlin-like turbulence using sin/cos
-        float noise = 0.0;
-        noise += sin(uv.x * 2.5 + uTime * 0.3) * cos(uTime * 0.2) * 0.08;
-        noise += sin(uv.x * 5.0 + uTime * 0.5) * 0.06;
-        noise += cos(uv.x * 7.5 + uTime * 0.4) * 0.04;
+        // Soft horizontal flowing layers - PS3 XMB style
+        float wave1 = sin(uv.x * 1.8 + time * 0.6) * 0.12;
+        float wave2 = sin(uv.x * 2.4 + time * 0.85 + 1.5) * 0.085;
+        float wave3 = cos(uv.x * 1.3 + time * 0.45 + 3.0) * 0.11;
         
-        // Primary wave layer - flowing and undulating
-        float wave1 = sin(uv.x * 3.0 + uTime * 0.6) * 0.18 + 0.5;
-        wave1 += sin(uv.x * 1.5 + uTime * 0.3 + 3.14159) * 0.08;
-        wave1 += noise * 0.5;
+        // Very subtle vertical modulation
+        float vMod = sin(uv.y * 8.0 + time * 0.3) * 0.008;
         
-        // Secondary wave - offset and different frequency
-        float wave2 = sin(uv.x * 2.5 + uTime * 0.4 + 2.0) * 0.15 + 0.38;
-        wave2 += sin(uv.x * 4.0 + uTime * 0.7) * 0.06;
-        wave2 += noise * -0.3;
+        float d1 = abs(uv.y - 0.42 - wave1 - vMod) * 9.0;
+        float d2 = abs(uv.y - 0.58 - wave2 + vMod * 1.2) * 8.5;
+        float d3 = abs(uv.y - 0.31 - wave3) * 10.0;
         
-        // Tertiary wave - subtle variation
-        float wave3 = cos(uv.x * 2.0 + uTime * 0.25 + 4.0) * 0.12 + 0.25;
-        wave3 += sin(uv.x * 3.5 + uTime * 0.5 + 1.5) * 0.07;
-        wave3 += noise * 0.4;
+        // Soft glowing bands
+        float line1 = smoothstep(0.22, 0.0, d1) * 0.75;
+        float line2 = smoothstep(0.18, 0.0, d2) * 0.65;
+        float line3 = smoothstep(0.25, 0.0, d3) * 0.55;
         
-        // Inverse waves (mirror effect)
-        float waveInv1 = 1.0 - wave1 + sin(uTime * 0.15) * 0.05;
-        float waveInv2 = 1.0 - wave2 + cos(uTime * 0.12) * 0.05;
+        float combined = max(max(line1, line2), line3);
         
-        // Distance calculations with smoothness modulation
-        float d1 = abs(uv.y - wave1) * 7.5;
-        float d2 = abs(uv.y - wave2) * 8.5;
-        float d3 = abs(uv.y - wave3) * 7.0;
-        float dInv1 = abs(uv.y - waveInv1) * 6.5;
-        float dInv2 = abs(uv.y - waveInv2) * 7.0;
-        
-        // Create wave lines with varying sharpness
-        float line1 = smoothstep(0.16, 0.0, d1) * (0.8 + sin(uTime * 0.3) * 0.2);
-        float line2 = smoothstep(0.13, 0.0, d2) * (0.9 + cos(uTime * 0.25) * 0.15);
-        float line3 = smoothstep(0.11, 0.0, d3) * (0.7 + sin(uTime * 0.4 + 1.5) * 0.2);
-        float lineInv1 = smoothstep(0.14, 0.0, dInv1) * 0.6;
-        float lineInv2 = smoothstep(0.12, 0.0, dInv2) * 0.5;
-        
-        // Combine all waves
-        float combined = max(max(max(max(line1, line2), line3), lineInv1), lineInv2);
-        
-        if (combined < 0.01) {
+        if (combined < 0.02) {
           discard;
         }
         
-        // Dynamic color mixing with time-based variation
-        vec3 col = mix(uColor1, uColor2, (line1 * 0.4 + line2 * 0.4 + sin(uTime * 0.1) * 0.2));
-        col = mix(col, uColor1, lineInv1 * 0.3);
-        col *= (1.0 + sin(uTime * 0.2) * 0.15);
+        // Elegant color mixing - deep purple/blue tones like PS3
+        vec3 col = mix(uColor1, uColor2, uv.y * 0.6 + sin(time * 0.2) * 0.15);
+        col += vec3(0.15, 0.08, 0.35) * combined; // subtle glow boost
         
-        gl_FragColor = vec4(col, combined * 0.8);
+        gl_FragColor = vec4(col, combined * 0.65);
       }
     `;
     
@@ -128,14 +104,12 @@ class WebGLWaveRenderer {
     this.context.enableVertexAttribArray(posLoc);
     this.context.vertexAttribPointer(posLoc, 2, this.context.FLOAT, false, 0, 0);
     
-    // Enable blending for proper transparency
     this.context.enable(this.context.BLEND);
     this.context.blendFunc(this.context.SRC_ALPHA, this.context.ONE_MINUS_SRC_ALPHA);
     this.context.clearColor(0.0, 0.0, 0.0, 0.0);
     
-    // Set initial colors
-    this.context.uniform3f(this.color1UniformLocation, 0.48, 0.3, 1.0);
-    this.context.uniform3f(this.color2UniformLocation, 0.7, 0.53, 1.0);
+    // PS3-inspired deep purple gradient
+    this.setColors('#4a2b8c', '#8b5cf6');
     
     this.resizeCanvas();
     this.startAnimation();
@@ -164,13 +138,10 @@ class WebGLWaveRenderer {
   }
   
   setColors(color1, color2) {
-    // Convert hex/rgb to normalized float values
     const c1 = this.hexToVec3(color1);
     const c2 = this.hexToVec3(color2);
-    if (this.color1UniformLocation !== null && this.color2UniformLocation !== null) {
-      this.context.uniform3f(this.color1UniformLocation, c1.x, c1.y, c1.z);
-      this.context.uniform3f(this.color2UniformLocation, c2.x, c2.y, c2.z);
-    }
+    if (this.color1UniformLocation) this.context.uniform3f(this.color1UniformLocation, c1.x, c1.y, c1.z);
+    if (this.color2UniformLocation) this.context.uniform3f(this.color2UniformLocation, c2.x, c2.y, c2.z);
   }
   
   hexToVec3(hex) {
@@ -179,7 +150,7 @@ class WebGLWaveRenderer {
       x: parseInt(result[1], 16) / 255,
       y: parseInt(result[2], 16) / 255,
       z: parseInt(result[3], 16) / 255
-    } : { x: 0.5, y: 0.3, z: 1.0 };
+    } : { x: 0.4, y: 0.2, z: 0.8 };
   }
   
   startAnimation() {
@@ -198,9 +169,7 @@ class WebGLWaveRenderer {
   }
   
   destroy() {
-    if (this.animationFrame) {
-      cancelAnimationFrame(this.animationFrame);
-    }
+    if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
   }
 }
 
@@ -272,6 +241,16 @@ const PLATFORM_LABELS = {
   unknown: 'Unknown system'
 };
 
+// Emoji fallbacks used when a PNG asset file is missing.
+const PLATFORM_EMOJI = {
+  ps1: '🎮', ps2: '🎮', psp: '🕹️', gamecube: '🎮', wii: '🕹️',
+  snes: '🕹️', nes: '🕹️', n64: '🕹️', genesis: '🎮', gba: '👾',
+  gb: '👾', arcade: '🕹️', dreamcast: '🎮', switch: '🎮', unknown: '❓'
+};
+const MENU_EMOJI = {
+  home: '🏠', folder: '📁', playlists: '▶️', settings: '⚙️', power: '⏻'
+};
+
 // 🎨 Use image icons from assets folder instead of emojis
 const PLATFORM_ICONS = {
   ps1: './assets/ps1.png',
@@ -318,8 +297,9 @@ const POWER_LABELS = {
 const App = () => {
   const [activeSection, setActiveSection] = useState('Home');
   const [focusArea, setFocusArea] = useState('menu');
-  const [subIndex, setSubIndex] = useState(0);  // 🎮 XMB Enhancement: Delayed preview update for authentic feel
-  const [delayedPreviewIndex, setDelayedPreviewIndex] = useState(0);  const [bazzitePath, setBazzitePath] = useState(null);
+  const [subIndex, setSubIndex] = useState(0);
+  const [delayedPreviewIndex, setDelayedPreviewIndex] = useState(0);
+  const [bazzitePath, setBazzitePath] = useState(null);
   const [library, setLibrary] = useState(null);
   const [selectedRom, setSelectedRom] = useState(null);
   const [booting, setBooting] = useState(true);
@@ -333,15 +313,8 @@ const App = () => {
   const [pendingPower, setPendingPower] = useState(null);
   
   // 🎨 Dynamic background state
-  const [waveOffset, setWaveOffset] = useState(0);  // Horizontal shift of waves
-  const [glowIntensity, setGlowIntensity] = useState(1);  // Glow intensity multiplier
-  const [lastInputDirection, setLastInputDirection] = useState(null);  // For visual feedback
-  const [breathScale, setBreathScale] = useState(1);  // Overall breathing scale
-  const [wave1Offset, setWave1Offset] = useState(0);  // Wave 1 vertical breathing
-  const [wave2Offset, setWave2Offset] = useState(0);  // Wave 2 vertical breathing
-  const [wave3Offset, setWave3Offset] = useState(0);  // Wave 3 vertical breathing
-  const [randomJitter, setRandomJitter] = useState(0);  // Random horizontal jitter
-  const breathingRef = useRef(null);  // Ref for breathing animation frame
+  const [glowIntensity, setGlowIntensity] = useState(1);
+  const [lastInputDirection, setLastInputDirection] = useState(null);
 
   // 🎨 WebGL Wave Renderer
   const waveRendererRef = useRef(null);
@@ -359,18 +332,20 @@ const App = () => {
   
   // Audio refs
   const menuMusicRef = useRef(null);
-  const navSoundRef = useRef(null);
-  const startupSoundRef = useRef(null);
+  const navSound1Ref = useRef(null);
+  const navSound2Ref = useRef(null);
+  const invalidSoundRef = useRef(null);
+  const selectSoundRef = useRef(null);
   const menuBarRef = useRef(null);
+  const submenuAreaRef = useRef(null);
   
-  // 🔥 FIX #3: Gamepad state tracking - store previous frame for edge detection
+  // Gamepad state tracking
   const lastGamepadButtonState = useRef(Array(16).fill(false));
   const lastGamepadAnalogState = useRef({ x: 0, y: 0 });
   const gamepadPollRef = useRef(null);
   
   // Cleanup refs
   const pendingPowerTimeout = useRef(null);
-  // Refs for values needed inside input handler (avoids stale closure)
   const sectionItemsRef = useRef([]);
   const pendingPowerRef = useRef(null);
 
@@ -385,17 +360,56 @@ const App = () => {
   useEffect(() => { useGamescopeRef.current = useGamescope; }, [useGamescope]);
   useEffect(() => { statusRef.current = status; }, [status]);
 
+  // Dynamic menu centering
+  useEffect(() => {
+    const positionMenu = () => {
+      if (!menuBarRef.current || !submenuAreaRef.current) return;
+      const items = menuBarRef.current.children;
+      if (items.length === 0) return;
+
+      const activeIndex = Math.max(menuItems.findIndex((item) => item.label === activeSection), 0);
+      const activeItem = items[activeIndex];
+      if (!activeItem) return;
+
+      const itemRect = activeItem.getBoundingClientRect();
+      const containerRect = menuBarRef.current.getBoundingClientRect();
+      const anchorRect = submenuAreaRef.current.getBoundingClientRect();
+
+      const itemOffsetInRow = itemRect.left - containerRect.left;
+      const targetTranslate = anchorRect.left - itemOffsetInRow;
+
+      menuBarRef.current.style.transform = `translateX(${targetTranslate}px)`;
+    };
+
+    positionMenu();
+
+    let resizeFrame = null;
+    const onResize = () => {
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(positionMenu);
+    };
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
+    };
+  }, [activeSection]);
+
   // 🎵 Audio playback helpers
   const appendConsole = (message) => {
     setConsoleLog((prev) => [...prev, message]);
   };
 
-  // 🎵 Audio playback helpers
+  // 🎵 Navigation sound - randomly chooses between nav1.wav and nav2.wav
   const playNavigationSound = () => {
     try {
-      if (navSoundRef.current) {
-        navSoundRef.current.currentTime = 0;
-        const playPromise = navSoundRef.current.play();
+      const navRefs = [navSound1Ref, navSound2Ref];
+      const randomRef = navRefs[Math.floor(Math.random() * navRefs.length)];
+      
+      if (randomRef.current) {
+        randomRef.current.currentTime = 0;
+        const playPromise = randomRef.current.play();
         if (playPromise !== undefined) {
           playPromise.catch((err) => console.warn('Nav sound play failed:', err));
         }
@@ -405,11 +419,12 @@ const App = () => {
     }
   };
 
+  // 🎵 Valid selection sound
   const playSelectSound = () => {
     try {
-      if (navSoundRef.current) {
-        navSoundRef.current.currentTime = 0;
-        const playPromise = navSoundRef.current.play();
+      if (selectSoundRef.current) {
+        selectSoundRef.current.currentTime = 0;
+        const playPromise = selectSoundRef.current.play();
         if (playPromise !== undefined) {
           playPromise.catch((err) => console.warn('Select sound play failed:', err));
         }
@@ -419,34 +434,42 @@ const App = () => {
     }
   };
 
-  const playBackSound = () => {
+  // 🎵 Invalid selection sound
+  const playInvalidSound = () => {
     try {
-      if (navSoundRef.current) {
-        navSoundRef.current.currentTime = 0;
-        const playPromise = navSoundRef.current.play();
+      if (invalidSoundRef.current) {
+        invalidSoundRef.current.currentTime = 0;
+        const playPromise = invalidSoundRef.current.play();
         if (playPromise !== undefined) {
-          playPromise.catch((err) => console.warn('Back sound play failed:', err));
+          playPromise.catch((err) => console.warn('Invalid sound play failed:', err));
         }
       }
+    } catch (err) {
+      console.warn('Error playing invalid sound:', err);
+    }
+  };
+
+  const playBackSound = () => {
+    try {
+      playNavigationSound();
     } catch (err) {
       console.warn('Error playing back sound:', err);
     }
   };
 
-  // 🎨 Initialize WebGL wave renderer
+  // Initialize WebGL wave renderer
   useEffect(() => {
     if (!waveCanvasRef.current) return;
     
     try {
       waveRendererRef.current = new WebGLWaveRenderer(waveCanvasRef.current, 'dark');
       if (waveRendererRef.current && waveRendererRef.current.context) {
-        waveRendererRef.current.setColors('#7b4dff', '#b389ff');  // Purple theme colors
+        waveRendererRef.current.setColors('#7b4dff', '#b389ff');
       }
     } catch (err) {
       console.warn('WebGL initialization failed, falling back to CSS waves:', err);
     }
     
-    // Handle window resize
     const handleResize = () => {
       if (waveRendererRef.current && waveRendererRef.current.context) {
         waveRendererRef.current.resizeCanvas();
@@ -464,19 +487,7 @@ const App = () => {
     };
   }, []);
 
-  // 🎨 Smooth wave offset decay - gradually return to center
-  useEffect(() => {
-    if (waveOffset === 0) return;
-    const timer = setTimeout(() => {
-      setWaveOffset((prev) => {
-        const decayed = prev * 0.85;  // Exponential decay
-        return Math.abs(decayed) < 0.5 ? 0 : decayed;  // Stop when negligible
-      });
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [waveOffset]);
-
-  // 🎨 Smooth glow intensity decay - gradually return to normal
+  // Smooth glow intensity decay
   useEffect(() => {
     if (Math.abs(glowIntensity - 1) < 0.01) {
       setGlowIntensity(1);
@@ -484,53 +495,40 @@ const App = () => {
     }
     const timer = setTimeout(() => {
       setGlowIntensity((prev) => {
-        const target = focusArea === 'submenu' ? 1.15 : 1;  // Boost when in submenu
-        const decayed = prev + (target - prev) * 0.15;  // Smooth decay to target
+        const target = focusArea === 'submenu' ? 1.15 : 1;
+        const decayed = prev + (target - prev) * 0.15;
         return Math.abs(decayed - target) < 0.02 ? target : decayed;
       });
     }, 80);
     return () => clearTimeout(timer);
   }, [glowIntensity, focusArea]);
 
-  // Clear input direction indicator after a moment
+  // Clear input direction indicator
   useEffect(() => {
     if (!lastInputDirection) return;
     const timer = setTimeout(() => setLastInputDirection(null), 300);
     return () => clearTimeout(timer);
   }, [lastInputDirection]);
 
-  // 🎨 Organic breathing animation for waves - creates fluid, alive movement
+  // Boot sequence
   useEffect(() => {
-    let time = 0;
-    const breathe = () => {
-      time += 0.016;  // ~60fps
-      
-      // Different frequencies for each wave to create organic layering
-      const wave1Breathe = Math.sin(time * 0.8) * 12;
-      const wave2Breathe = Math.cos(time * 1.2 + 1) * 14;
-      const wave3Breathe = Math.sin(time * 0.6 + 2) * 10;
-      
-      // Overall pulsing breath
-      const overallBreath = 1 + Math.sin(time * 0.5) * 0.08;
-      
-      // Random jitter that changes slowly
-      const jitterBase = Math.sin(time * 0.3) * 4 + Math.cos(time * 0.15 + 5) * 3;
-      
-      setWave1Offset(wave1Breathe);
-      setWave2Offset(wave2Breathe);
-      setWave3Offset(wave3Breathe);
-      setBreathScale(overallBreath);
-      setRandomJitter(jitterBase);
-      
-      breathingRef.current = requestAnimationFrame(breathe);
-    };
-    
-    breathingRef.current = requestAnimationFrame(breathe);
-    
-    return () => {
-      if (breathingRef.current) cancelAnimationFrame(breathingRef.current);
-    };
+    const timer = setTimeout(() => setBooting(false), 2500);
+    return () => clearTimeout(timer);
   }, []);
+
+  // Clock update
+  useEffect(() => {
+    const timer = setInterval(() => setClock(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Delayed preview index for XMB feel
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDelayedPreviewIndex(subIndex);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [subIndex]);
 
   useEffect(() => {
     if (!window.arqaAPI) {
@@ -574,7 +572,6 @@ const App = () => {
     const getCurrentIndex = () => menuItems.findIndex((item) => item.label === activeSectionRef.current);
 
     const handleInput = (input) => {
-      // 🎮 XMB Enhancement: Input cooldown prevents rapid repeat
       if (!inputCooldown.isReady(input, input.includes('Arrow') ? 100 : 80)) {
         return;
       }
@@ -587,8 +584,6 @@ const App = () => {
         case 'ArrowLeft':
           playNavigationSound();
           setLastInputDirection('left');
-          setWaveOffset((prev) => prev - 8);  // 🎨 Shift waves left
-          setGlowIntensity(0.85);  // Reduce glow slightly
           if (currentFocus === 'menu') {
             const currentIndex = getCurrentIndex();
             const nextIndex = clampWrap(currentIndex - 1, menuItems.length);
@@ -602,8 +597,6 @@ const App = () => {
         case 'ArrowRight':
           playNavigationSound();
           setLastInputDirection('right');
-          setWaveOffset((prev) => prev + 8);  // 🎨 Shift waves right
-          setGlowIntensity(0.85);  // Reduce glow slightly
           if (currentFocus === 'menu') {
             const currentIndex = getCurrentIndex();
             const nextIndex = clampWrap(currentIndex + 1, menuItems.length);
@@ -616,21 +609,17 @@ const App = () => {
           break;
         case 'ArrowUp':
           playNavigationSound();
-          setGlowIntensity(1.1);  // 🎨 Boost glow on selection
           if (currentFocus === 'submenu' && subIndexRef.current === 0) {
             setFocusArea('menu');
           } else if (currentFocus === 'submenu') {
-            // 🎮 XMB Enhancement: Wrap-around vertical navigation
             setSubIndex((prev) => clampWrap(prev - 1, itemCount));
           }
           break;
         case 'ArrowDown':
           playNavigationSound();
-          setGlowIntensity(1.1);  // 🎨 Boost glow on selection
           if (currentFocus === 'menu' && itemCount > 0) {
             setFocusArea('submenu');
           } else if (currentFocus === 'submenu' && itemCount > 0) {
-            // 🎮 XMB Enhancement: Wrap-around vertical navigation
             setSubIndex((prev) => clampWrap(prev + 1, itemCount));
           }
           break;
@@ -639,10 +628,9 @@ const App = () => {
             const item = currentItems[subIndexRef.current];
             if (item?.action && !item.disabled) {
               playSelectSound();
-              // 🎨 Dramatic glow pulse on selection
-              setGlowIntensity(1.4);
-              setWaveOffset((prev) => prev * 0.5);  // Dampen wave motion on selection
               item.action();
+            } else {
+              playInvalidSound();
             }
           }
           break;
@@ -650,8 +638,6 @@ const App = () => {
         case 'Back':
         case 'Escape':
           playBackSound();
-          // 🎨 Subtle glow fade on back
-          setGlowIntensity(0.9);
           if (focusAreaRef.current === 'submenu') {
             setFocusArea('menu');
           } else {
@@ -665,13 +651,11 @@ const App = () => {
     const onKeyDown = (event) => {
       if (event.repeat) return;
       
-      // Only handle navigation keys, let system shortcuts through
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(event.key)) {
         return;
       }
       
       handleInput(event.key);
-      // Only prevent default for navigation to avoid page scroll
       event.preventDefault();
     };
 
@@ -681,12 +665,10 @@ const App = () => {
         if (!pad) continue;
         const currentButtons = pad.buttons.map((button) => button.pressed);
         
-        // 🔥 FIX #3: Proper edge detection - only trigger on button press (rising edge)
         for (let i = 0; i < currentButtons.length; i++) {
           const wasPressed = lastGamepadButtonState.current[i];
           const isPressed = currentButtons[i];
           
-          // Rising edge: wasn't pressed last frame, is pressed this frame
           if (isPressed && !wasPressed) {
             switch (i) {
               case 12: handleInput('ArrowUp'); break;
@@ -699,16 +681,13 @@ const App = () => {
           }
         }
         
-        // Update state for next frame
         lastGamepadButtonState.current = [...currentButtons];
         
-        // 🎮 Analog stick support with edge detection (no spam)
         if (pad.axes && pad.axes.length >= 2) {
           const leftStickX = pad.axes[0] || 0;
           const leftStickY = pad.axes[1] || 0;
           const DEADZONE = 0.65;
           
-          // Only trigger if stick crosses deadzone from idle state
           const isXActive = Math.abs(leftStickX) > DEADZONE;
           const isYActive = Math.abs(leftStickY) > DEADZONE;
           const wasXActive = Math.abs(lastGamepadAnalogState.current.x) > DEADZONE;
@@ -721,7 +700,6 @@ const App = () => {
             handleInput(leftStickY > 0 ? 'ArrowDown' : 'ArrowUp');
           }
           
-          // Update analog state for next frame
           lastGamepadAnalogState.current = { x: leftStickX, y: leftStickY };
         }
       }
@@ -873,6 +851,7 @@ const App = () => {
       clearTimeout(pendingPowerTimeout.current);
       setPendingPower(null);
       pendingPowerRef.current = null;
+      playSelectSound();
       run();
     } else {
       playSelectSound();
@@ -993,9 +972,6 @@ const App = () => {
     }
   };
 
-  const activeIndex = Math.max(menuItems.findIndex((item) => item.label === activeSection), 0);
-  
-  // � Dynamic glow color based on active section
   const sectionColors = {
     Home: { glow: 'rgba(126, 79, 255, 0.16)', wave: 'rgba(138, 84, 255, 0.25)' },
     Library: { glow: 'rgba(155, 107, 255, 0.18)', wave: 'rgba(150, 95, 255, 0.28)' },
@@ -1005,10 +981,6 @@ const App = () => {
   };
   
   const currentColor = sectionColors[activeSection] || sectionColors.Home;
-  
-  // �🎮 XMB Enhancement: Calculate horizontal scroll for menu items (they scroll left when selected)
-  // Each menu item is ~(92px + 40px gap) = 132px wide. Scroll to keep active item centered-left
-  const scrollOffset = activeIndex * -132;  // Move left as index increases
 
   const navItems = menuItems.map((item) =>
     h('div', {
@@ -1022,23 +994,31 @@ const App = () => {
       }
     },
       h('div', { className: 'xmb-title-icon-wrap' },
-        h('img', { className: 'xmb-title-icon', src: item.icon, alt: item.label })
+        h('img', {
+          className: 'xmb-title-icon',
+          src: item.icon,
+          alt: item.label,
+          onError: (e) => {
+            const key = item.icon ? item.icon.replace('./assets/', '').replace('.png', '') : '';
+            const fallback = MENU_EMOJI[key] || '🎮';
+            e.target.replaceWith(Object.assign(document.createElement('span'), {
+              className: 'xmb-title-icon-emoji',
+              textContent: fallback
+            }));
+          }
+        })
       ),
       h('p', { className: 'titletext' }, item.label)
     )
   );
 
-  // 🔥 FIX #1: Memoize sectionItems to prevent desync during fast input
-  // Rebuild only when activeSection, library, selectedRom, status, or recentlyPlayed change
   const sectionItems = useMemo(
     () => buildSectionItems(activeSection),
     [activeSection, library, selectedRom, status, recentlyPlayed, useGamescope]
   );
-  // Keep ref in sync so the input handler (useEffect []) always sees fresh items
+  
   useEffect(() => { sectionItemsRef.current = sectionItems; }, [sectionItems]);
 
-  // 🔥 FIX #4: Safe bounds checking for previewItem
-  // 🎮 XMB Enhancement: Use delayed index for smooth preview lag
   const previewItem = sectionItems.length > 0 
     ? sectionItems[Math.min(delayedPreviewIndex, sectionItems.length - 1)]
     : null;
@@ -1053,10 +1033,20 @@ const App = () => {
       const opacity = Math.max(1 - distance * 0.18, 0.4);
       const isFocused = subIndex === index;
       
-      // 🎨 Detect if icon is image path or emoji
       const isImageIcon = item.icon && (item.icon.includes('.png') || item.icon.includes('.jpg') || item.icon.includes('.svg'));
-      const iconElement = isImageIcon 
-        ? h('img', { className: 'xmb-sub-icon-img', src: item.icon, alt: item.label })
+      const iconElement = isImageIcon
+        ? h('img', {
+            className: 'xmb-sub-icon-img',
+            src: item.icon,
+            alt: item.label,
+            onError: (e) => {
+              const fallback = PLATFORM_EMOJI[item.platform] || PLATFORM_EMOJI[item.id] || '🎮';
+              e.target.replaceWith(Object.assign(document.createElement('span'), {
+                className: 'xmb-sub-icon',
+                textContent: fallback
+              }));
+            }
+          })
         : h('span', { className: 'xmb-sub-icon' }, item.icon);
 
       return h('div', {
@@ -1064,7 +1054,10 @@ const App = () => {
         className: `xmb-sub-item ${focusArea === 'submenu' && isFocused ? 'focused' : ''} ${item.disabled ? 'disabled' : ''} ${item.armed ? 'armed' : ''}`,
         style: { transform: `scale(${isFocused ? 1.02 : scale})`, opacity: isFocused ? 1 : opacity },
         onClick: () => {
-          if (item.disabled) return;
+          if (item.disabled) {
+            playInvalidSound();
+            return;
+          }
           playSelectSound();
           setSubIndex(index);
           setFocusArea('submenu');
@@ -1093,11 +1086,35 @@ const App = () => {
   return h('div', null,
     // 🎵 Audio elements for sound effects and music
     h('audio', { 
-      ref: navSoundRef, 
+      ref: navSound1Ref, 
       preload: 'auto',
       style: { display: 'none' }
     }, 
-      h('source', { src: './assets/nav.mp3', type: 'audio/mpeg' })
+      h('source', { src: './assets/nav1.wav', type: 'audio/wav' })
+    ),
+    
+    h('audio', { 
+      ref: navSound2Ref, 
+      preload: 'auto',
+      style: { display: 'none' }
+    }, 
+      h('source', { src: './assets/nav2.wav', type: 'audio/wav' })
+    ),
+    
+    h('audio', { 
+      ref: invalidSoundRef, 
+      preload: 'auto',
+      style: { display: 'none' }
+    }, 
+      h('source', { src: './assets/invalid.wav', type: 'audio/wav' })
+    ),
+    
+    h('audio', { 
+      ref: selectSoundRef, 
+      preload: 'auto',
+      style: { display: 'none' }
+    }, 
+      h('source', { src: './assets/select.wav', type: 'audio/wav' })
     ),
     
     h('audio', { 
@@ -1106,7 +1123,7 @@ const App = () => {
       loop: true,
       style: { display: 'none' }
     }, 
-      h('source', { src: './assets/menumusic1.mp3', type: 'audio/mpeg' })
+      h('source', { src: './assets/menumusic1.mp3', type: 'audio/mp3' })
     ),
     
     booting && h('div', { className: 'startup-overlay' },
@@ -1114,41 +1131,14 @@ const App = () => {
       h('div', { className: 'startup-text' }, 'ARQA Launcher')
     ),
     h('div', { className: 'xmb-stage', tabIndex: -1 },
-      // 🎨 WebGL wave background canvas
+      // WebGL wave background canvas
       h('canvas', { 
         ref: waveCanvasRef,
         className: 'xmb-webgl-canvas',
         style: { position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none', outline: 'none' }
       }),
       
-      h('div', { className: 'xmb-waves' },
-        h('div', { 
-          className: 'wave wave-1', 
-          style: { 
-            transform: `translateX(${waveOffset * 0.8 + randomJitter * 0.5}px) translateY(${wave1Offset}px) scaleY(${breathScale})` 
-          } 
-        }),
-        h('div', { 
-          className: 'wave wave-2', 
-          style: { 
-            transform: `translateX(${waveOffset * -0.6 + randomJitter * 0.6}px) translateY(${wave2Offset}px) scaleY(${breathScale * 1.05})` 
-          } 
-        }),
-        h('div', { 
-          className: 'wave wave-3', 
-          style: { 
-            transform: `translateX(${waveOffset * 0.4 + randomJitter * 0.4}px) translateY(${wave3Offset}px) scaleY(${breathScale * 0.95})` 
-          } 
-        }),
-        h('div', { 
-          className: 'wave-glow', 
-          style: { 
-            opacity: (0.16 * glowIntensity) * breathScale,
-            boxShadow: `0 0 ${40 * glowIntensity}px ${currentColor.wave}`,
-            transform: `translate(-50%, -50%) scale(${breathScale * (1 + glowIntensity * 0.05)})`
-          } 
-        })
-      ),
+      h('div', { className: 'xmb-waves' }),
 
       h('div', { className: 'hud-top' },
         h('div', { className: 'hud-brand' },
@@ -1161,11 +1151,11 @@ const App = () => {
         )
       ),
 
-      h('div', { className: 'xmb-row', ref: menuBarRef, style: { transform: `translateX(${scrollOffset}px)` } },
+      h('div', { className: 'xmb-row', ref: menuBarRef },
         ...navItems
       ),
 
-      h('div', { className: 'xmb-submenu-area' },
+      h('div', { className: 'xmb-submenu-area', ref: submenuAreaRef },
         h('div', { className: 'xmb-sub-section-label' }, activeSection),
         h('div', { 
           key: `submenu-${activeSection}`,
@@ -1175,7 +1165,7 @@ const App = () => {
         )
       ),
 
-      // 🎮 Focus hint bar - shows context-sensitive controls
+      // Focus hint bar
       h('div', { className: 'xmb-hint-bar' },
         focusArea === 'menu'
           ? h('div', { className: 'xmb-hints' },
@@ -1189,7 +1179,7 @@ const App = () => {
             )
       ),
 
-      // 🎨 Static vignette overlay - darkens edges smoothly
+      // Vignette overlay
       h('div', { className: 'xmb-vignette' }),
 
       h('div', {

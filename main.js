@@ -6,11 +6,28 @@ const fs = require('fs');
 let mainWindow;
 let gameProcess = null;
 
-// ---------- Settings persistence ----------
-// Remembers the emulator path, last library folder, gamescope preference,
-// and recently played titles across restarts so the user isn't re-picking
-// the same files every session.
+// ---------- Shell-style argument tokenizer ----------
+function tokenizeArgs(str) {
+  if (!str || !str.trim()) return [];
+  const tokens = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === ' ' && !inSingle && !inDouble) {
+      if (current) { tokens.push(current); current = ''; }
+      continue;
+    }
+    current += ch;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
 
+// ---------- Settings persistence ----------
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'arqa-settings.json');
 
 function defaultSettings() {
@@ -44,7 +61,6 @@ function persistSettings() {
 let settings = loadSettings();
 
 // ---------- ROM platform detection ----------
-
 const PLATFORM_EXTENSIONS = {
   ps1: ['.bin', '.cue', '.img', '.pbp', '.chd'],
   ps2: ['.iso', '.chd'],
@@ -63,8 +79,6 @@ const PLATFORM_EXTENSIONS = {
   generic: ['.elf']
 };
 
-// Keep the original extension set (.iso/.bin/.cue/.pbp/.elf) plus the wider
-// set above, so anything that scanned before still scans now.
 const KNOWN_EXTENSIONS = new Set([
   '.iso', '.bin', '.cue', '.pbp', '.elf',
   ...Object.values(PLATFORM_EXTENSIONS).flat()
@@ -75,7 +89,7 @@ function detectPlatform(filename) {
   for (const [platform, exts] of Object.entries(PLATFORM_EXTENSIONS)) {
     if (exts.includes(ext)) return platform;
   }
-  if (ext === '.iso') return 'ps2'; // common default for a bare .iso
+  if (ext === '.iso') return 'ps2';
   if (ext === '.elf') return 'generic';
   return 'unknown';
 }
@@ -103,8 +117,6 @@ function scanFolder(folderPath) {
   return { folderPath, roms, platforms };
 }
 
-// Crude PATH lookup so we know whether gamescope is actually installed
-// before relying on it. Arqa ships it by default; a derivative image might not.
 function which(binary) {
   const dirs = (process.env.PATH || '').split(path.delimiter);
   for (const dir of dirs) {
@@ -115,7 +127,6 @@ function which(binary) {
 }
 
 // ---------- Window ----------
-
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -126,17 +137,45 @@ function createWindow() {
     frame: false,
     fullscreen: true,
     autoHideMenuBar: true,
-    backgroundColor: '#05080f',
+    backgroundColor: '#05030c',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Allow audio autoplay for menu sounds, navigation, and background music
+      autoplayPolicy: 'no-user-gesture-required'
+    }
+  });
+
+  // Ensure the assets directory exists with required audio files
+  const assetsDir = path.join(__dirname, 'renderer', 'assets');
+  if (!fs.existsSync(assetsDir)) {
+    fs.mkdirSync(assetsDir, { recursive: true });
+    console.log('Created assets directory:', assetsDir);
+  }
+
+  // Verify required audio files exist, log warnings if missing
+  const requiredAudioFiles = [
+    'nav1.wav',
+    'nav2.wav', 
+    'select.wav',
+    'invalid.wav',
+    'menumusic1.mp3'
+  ];
+
+  requiredAudioFiles.forEach(audioFile => {
+    const audioPath = path.join(assetsDir, audioFile);
+    if (!fs.existsSync(audioPath)) {
+      console.warn(`Audio file not found: ${audioPath}. Sound effects may not play.`);
     }
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
 }
+
+// Allow media autoplay without requiring user interaction
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 app.whenReady().then(createWindow);
 
@@ -153,7 +192,6 @@ app.on('activate', () => {
 });
 
 // ---------- Executable / library selection ----------
-
 ipcMain.handle('select-bazzite-executable', async () => {
   const wasFullscreen = mainWindow?.isFullScreen();
   if (wasFullscreen) mainWindow.setFullScreen(false);
@@ -205,8 +243,6 @@ ipcMain.handle('select-rom-folder', async () => {
   return scanned;
 });
 
-// Re-scan a previously chosen folder without opening a dialog, used to
-// restore the library on launch and for the "Rescan Library" settings item.
 ipcMain.handle('rescan-rom-folder', (_event, folderPath) => {
   if (!folderPath || !fs.existsSync(folderPath)) {
     return { error: 'That library folder no longer exists. Pick a new one.' };
@@ -215,7 +251,6 @@ ipcMain.handle('rescan-rom-folder', (_event, folderPath) => {
 });
 
 // ---------- Settings ----------
-
 ipcMain.handle('get-settings', () => settings);
 
 ipcMain.handle('save-settings', (_event, partial) => {
@@ -225,7 +260,6 @@ ipcMain.handle('save-settings', (_event, partial) => {
 });
 
 // ---------- Launching ----------
-
 ipcMain.handle('launch-bazzite', async (_event, { executablePath, romPath, extraArgs = [], useGamescope }) => {
   if (!executablePath || !romPath) {
     return { success: false, error: 'Bazzite path and ROM path are required.' };
@@ -239,20 +273,21 @@ ipcMain.handle('launch-bazzite', async (_event, { executablePath, romPath, extra
   if (!fs.existsSync(romPath)) {
     return { success: false, error: 'ROM file not found on disk.' };
   }
-  try {
-    fs.accessSync(executablePath, fs.constants.X_OK);
-  } catch {
-    return { success: false, error: 'Emulator executable is not marked executable (chmod +x).' };
+  if (process.platform !== 'win32') {
+    try {
+      fs.accessSync(executablePath, fs.constants.X_OK);
+    } catch {
+      return { success: false, error: 'Emulator executable is not marked executable (chmod +x).' };
+    }
   }
 
   const wantsGamescope = useGamescope !== false;
   const gamescopeBin = wantsGamescope ? which('gamescope') : null;
-  const globalArgs = (settings.extraArgs || '').split(' ').filter(Boolean);
+  const globalArgs = tokenizeArgs(settings.extraArgs || '');
 
   let command;
   let args;
   if (gamescopeBin) {
-    // -f: fullscreen. "--" hands the remaining args straight to the wrapped process.
     command = gamescopeBin;
     args = ['-f', '--', executablePath, romPath, ...globalArgs, ...extraArgs];
   } else {
@@ -270,6 +305,14 @@ ipcMain.handle('launch-bazzite', async (_event, { executablePath, romPath, extra
     return { success: false, error: error.message };
   }
 
+  const PROCESS_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours
+  const processWatchdog = setTimeout(() => {
+    if (gameProcess) {
+      mainWindow?.webContents.send('bazzite-output', '[arqa] Process exceeded timeout, force-killing.');
+      gameProcess.kill('SIGKILL');
+    }
+  }, PROCESS_TIMEOUT_MS);
+
   gameProcess.stdout.on('data', (data) => {
     mainWindow?.webContents.send('bazzite-output', data.toString());
   });
@@ -279,12 +322,14 @@ ipcMain.handle('launch-bazzite', async (_event, { executablePath, romPath, extra
   });
 
   gameProcess.on('error', (error) => {
+    clearTimeout(processWatchdog);
     mainWindow?.webContents.send('bazzite-output', `Process error: ${error.message}`);
     mainWindow?.webContents.send('bazzite-exit', -1);
     gameProcess = null;
   });
 
   gameProcess.on('close', (code) => {
+    clearTimeout(processWatchdog);
     mainWindow?.webContents.send('bazzite-exit', code);
     gameProcess = null;
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -306,7 +351,6 @@ ipcMain.handle('stop-bazzite', () => {
 });
 
 // ---------- System power ----------
-
 function spawnSystemCommand(cmd, args) {
   try {
     spawn(cmd, args, { stdio: 'ignore', detached: true }).unref();
@@ -335,11 +379,9 @@ ipcMain.handle('system-power', (_event, action) => {
   }
 });
 
-// ---------- Window chrome controls (unchanged) ----------
-
+// ---------- Window chrome controls ----------
 ipcMain.handle('close-window', () => {
   if (mainWindow) {
-    // Disable programmatic close; only Alt+F4 should terminate the app.
     return;
   }
 });
