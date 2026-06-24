@@ -6,3 +6,10 @@ yarn-debug.log*
 yarn-error.log*
 
 out/
+# Discord credential/token files (Electron userData - safeguard)
+arqa-key.bin
+arqa-discord.enc
+arqa-settings.json
+discord.config.json
+# Discord webview session token cache (auto-generated, never commit)
+.discord-auth

@@ -8,6 +8,13 @@
   <link rel="stylesheet" href="style.css" />
   <script src="./assets/react.production.min.js"></script>
   <script src="./assets/react-dom.production.min.js"></script>
+  <!-- ArqaLauncher XMB system libraries (load before renderer) -->
+  <script src="./lib/gameRegistry.js"></script>
+  <script src="./lib/assetResolver.js"></script>
+  <script src="./lib/previewSystem.js"></script>
+  <script src="./lib/contentRegistry.js"></script>
+  <!-- Discord panel UI (load before renderer) -->
+  <script src="./lib/discordPanel.js"></script>
 </head>
 <body>
   <div id="root"></div>

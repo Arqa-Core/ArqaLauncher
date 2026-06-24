@@ -13,7 +13,8 @@
     "scan": "node scripts/scan-roms.js",
     "validate": "node scripts/validate-setup.js",
     "settings": "node scripts/show-settings.js",
-    "reset-settings": "node scripts/reset-settings.js"
+    "reset-settings": "node scripts/reset-settings.js",
+    "clear-cache": "node scripts/clear-cache.js"
   },
   "keywords": [
     "electron",
