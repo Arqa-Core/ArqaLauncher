@@ -1,4 +1,4 @@
-const { useState, useEffect, useRef, useMemo, useReducer } = React;
+const { useState, useEffect, useLayoutEffect, useRef, useMemo } = React;
 const h = React.createElement;
 
 // ========== WEBGL WAVE RENDERER (PS3 XMB Style) ==========
@@ -9,6 +9,9 @@ class WebGLWaveRenderer {
     this.context = canvas.getContext('webgl') || canvas.getContext('webgl2');
     this.theme = theme;
     this.shaderProgram = null;
+    this.vertexShader = null;
+    this.fragmentShader = null;
+    this.vertexBuffer = null;
     this.startTime = Date.now();
     this.animationFrame = null;
     
@@ -71,17 +74,17 @@ class WebGLWaveRenderer {
       }
     `;
     
-    const vs = this.compileShader(vertexShaderSource, this.context.VERTEX_SHADER);
-    const fs = this.compileShader(fragmentShaderSource, this.context.FRAGMENT_SHADER);
+    this.vertexShader = this.compileShader(vertexShaderSource, this.context.VERTEX_SHADER);
+    this.fragmentShader = this.compileShader(fragmentShaderSource, this.context.FRAGMENT_SHADER);
     
-    if (!vs || !fs) {
+    if (!this.vertexShader || !this.fragmentShader) {
       console.error('Shader compilation failed - WebGL waves disabled');
       return;
     }
     
     this.shaderProgram = this.context.createProgram();
-    this.context.attachShader(this.shaderProgram, vs);
-    this.context.attachShader(this.shaderProgram, fs);
+    this.context.attachShader(this.shaderProgram, this.vertexShader);
+    this.context.attachShader(this.shaderProgram, this.fragmentShader);
     this.context.linkProgram(this.shaderProgram);
     
     if (!this.context.getProgramParameter(this.shaderProgram, this.context.LINK_STATUS)) {
@@ -97,8 +100,8 @@ class WebGLWaveRenderer {
     this.color1UniformLocation = this.context.getUniformLocation(this.shaderProgram, 'uColor1');
     this.color2UniformLocation = this.context.getUniformLocation(this.shaderProgram, 'uColor2');
     
-    const buffer = this.context.createBuffer();
-    this.context.bindBuffer(this.context.ARRAY_BUFFER, buffer);
+    this.vertexBuffer = this.context.createBuffer();
+    this.context.bindBuffer(this.context.ARRAY_BUFFER, this.vertexBuffer);
     const verts = new Float32Array([-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0, 1.0]);
     this.context.bufferData(this.context.ARRAY_BUFFER, verts, this.context.STATIC_DRAW);
     this.context.enableVertexAttribArray(posLoc);
@@ -170,6 +173,11 @@ class WebGLWaveRenderer {
   
   destroy() {
     if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+    if (!this.context) return;
+    if (this.shaderProgram) this.context.deleteProgram(this.shaderProgram);
+    if (this.vertexShader) this.context.deleteShader(this.vertexShader);
+    if (this.fragmentShader) this.context.deleteShader(this.fragmentShader);
+    if (this.vertexBuffer) this.context.deleteBuffer(this.vertexBuffer);
   }
 }
 
@@ -179,6 +187,16 @@ class WebGLWaveRenderer {
 const clampWrap = (index, length) => {
   if (length === 0) return 0;
   return ((index % length) + length) % length;
+};
+
+/** Format a ROM filename into a readable title */
+const formatRomName = (filename) => {
+  return filename
+    .replace(/\.[^/.]+$/, '')           // strip extension
+    .replace(/[._-]+/g, ' ')            // replace separators with spaces
+    .replace(/\s+/g, ' ')              // collapse multiple spaces
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase()); // title case
 };
 
 /** Check if two button arrays have same state (for gamepad edge detection) */
@@ -284,7 +302,16 @@ const ACTION_ICONS = {
   back: './assets/pointer_hand.png',
   gamescope: './assets/settings.png',
   clear: './assets/notification.png',
+  remove: './assets/notification.png',
   power: './assets/power.png'
+};
+
+// 🎨 Unique icon per power action
+const POWER_ICONS = {
+  quit:     './assets/power.png',
+  restart:  './assets/resume.png',
+  sleep:    './assets/subsettings/power-save-settings.png',
+  shutdown: './assets/power.png'
 };
 
 const POWER_LABELS = {
@@ -293,6 +320,40 @@ const POWER_LABELS = {
   sleep: 'Sleep',
   shutdown: 'Shut Down'
 };
+
+// ========== ERROR BOUNDARY ==========
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error('ArqaLauncher render error:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement('div', {
+        style: {
+          position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column',
+          justifyContent: 'center', alignItems: 'center', gap: '16px',
+          background: '#05030c', color: '#ff5c7a', fontFamily: 'monospace',
+          padding: '32px', textAlign: 'center'
+        }
+      },
+        React.createElement('span', { style: { fontSize: '2rem' } }, '\u26a0'),
+        React.createElement('p', { style: { fontSize: '1rem', color: '#c9a3ff', margin: 0 } }, 'A render error occurred.'),
+        React.createElement('pre', {
+          style: { fontSize: '0.75rem', color: '#8a7ac0', maxWidth: '600px', overflowX: 'auto', textAlign: 'left' }
+        }, String(this.state.error))
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const App = () => {
   const [activeSection, setActiveSection] = useState('Home');
@@ -311,16 +372,19 @@ const App = () => {
   const [useGamescope, setUseGamescope] = useState(true);
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
   const [pendingPower, setPendingPower] = useState(null);
-  
-  // 🎨 Dynamic background state
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [flashItemId, setFlashItemId] = useState(null);
+  const [librarySearch, setLibrarySearch] = useState('');
+
+  // Dynamic background state
   const [glowIntensity, setGlowIntensity] = useState(1);
   const [lastInputDirection, setLastInputDirection] = useState(null);
 
-  // 🎨 WebGL Wave Renderer
+  // WebGL Wave Renderer
   const waveRendererRef = useRef(null);
   const waveCanvasRef = useRef(null);
 
-  // Refs for avoiding stale closures
+  // Consolidated latest-state ref (replaces 9 individual synced refs)
   const activeSectionRef = useRef(activeSection);
   const focusAreaRef = useRef(focusArea);
   const subIndexRef = useRef(subIndex);
@@ -329,7 +393,20 @@ const App = () => {
   const bazzitePathRef = useRef(bazzitePath);
   const useGamescopeRef = useRef(useGamescope);
   const statusRef = useRef(status);
-  
+
+  // Subindex memory per section (persists scroll position when switching sections)
+  const sectionSubIndexRef = useRef({});
+
+  // Library search
+  const librarySearchRef = useRef('');
+  const librarySearchTimeoutRef = useRef(null);
+
+  // Direction of last section transition ('left' | 'right' | 'none')
+  const transitionDirRef = useRef('none');
+
+  // Console log DOM ref for auto-scroll
+  const consoleLogRef = useRef(null);
+
   // Audio refs
   const menuMusicRef = useRef(null);
   const navSound1Ref = useRef(null);
@@ -338,27 +415,32 @@ const App = () => {
   const selectSoundRef = useRef(null);
   const menuBarRef = useRef(null);
   const submenuAreaRef = useRef(null);
-  
+
   // Gamepad state tracking
   const lastGamepadButtonState = useRef(Array(16).fill(false));
   const lastGamepadAnalogState = useRef({ x: 0, y: 0 });
   const gamepadPollRef = useRef(null);
-  
+
   // Cleanup refs
   const pendingPowerTimeout = useRef(null);
   const sectionItemsRef = useRef([]);
   const pendingPowerRef = useRef(null);
 
-  // Keep refs in sync with state
-  useEffect(() => { activeSectionRef.current = activeSection; }, [activeSection]);
-  useEffect(() => { focusAreaRef.current = focusArea; }, [focusArea]);
-  useEffect(() => { subIndexRef.current = subIndex; }, [subIndex]);
-  useEffect(() => { libraryRef.current = library; }, [library]);
-  useEffect(() => { selectedRomRef.current = selectedRom; }, [selectedRom]);
-  useEffect(() => { bazzitePathRef.current = bazzitePath; }, [bazzitePath]);
-  useEffect(() => { pendingPowerRef.current = pendingPower; }, [pendingPower]);
-  useEffect(() => { useGamescopeRef.current = useGamescope; }, [useGamescope]);
-  useEffect(() => { statusRef.current = status; }, [status]);
+  // Single synchronous layout-effect keeps all stale-closure refs current after every render
+  useLayoutEffect(() => {
+    activeSectionRef.current = activeSection;
+    focusAreaRef.current = focusArea;
+    subIndexRef.current = subIndex;
+    libraryRef.current = library;
+    selectedRomRef.current = selectedRom;
+    bazzitePathRef.current = bazzitePath;
+    useGamescopeRef.current = useGamescope;
+    statusRef.current = status;
+    librarySearchRef.current = librarySearch;
+    // Save subIndex per section so we can restore it when switching back
+    sectionSubIndexRef.current[activeSection] = subIndex;
+  });
+  // pendingPowerRef is managed directly by confirmOrRun for immediate consistency
 
   // Dynamic menu centering
   useEffect(() => {
@@ -396,9 +478,13 @@ const App = () => {
     };
   }, [activeSection]);
 
-  // 🎵 Audio playback helpers
+  // Append to console log with timestamp, capped at 200 lines
   const appendConsole = (message) => {
-    setConsoleLog((prev) => [...prev, message]);
+    const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setConsoleLog((prev) => {
+      const next = [...prev, `[${ts}] ${message}`];
+      return next.length > 200 ? next.slice(next.length - 200) : next;
+    });
   };
 
   // 🎵 Navigation sound - randomly chooses between nav1.wav and nav2.wav
@@ -516,6 +602,23 @@ const App = () => {
     return () => clearTimeout(timer);
   }, []);
 
+  // Menu music — starts after the boot splash fades, respects browser autoplay policy
+  useEffect(() => {
+    if (booting) return;
+    const music = menuMusicRef.current;
+    if (!music) return;
+    music.volume = 0.35;
+    const p = music.play();
+    if (p) p.catch(() => {}); // silently ignore autoplay block
+  }, [booting]);
+
+  // Console auto-scroll to bottom when new lines arrive
+  useEffect(() => {
+    if (logExpanded && consoleLogRef.current) {
+      consoleLogRef.current.scrollTop = consoleLogRef.current.scrollHeight;
+    }
+  }, [consoleLog, logExpanded]);
+
   // Clock update
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 1000);
@@ -548,7 +651,9 @@ const App = () => {
       setRecentlyPlayed(loaded.recentlyPlayed || []);
 
       if (loaded.libraryFolder) {
+        setLibraryLoading(true);
         const result = await window.arqaAPI.rescanLibrary(loaded.libraryFolder);
+        setLibraryLoading(false);
         if (result && !result.error) {
           setLibrary(result);
           appendConsole(`Restored library: ${result.roms.length} title(s) from ${result.folderPath}`);
@@ -571,39 +676,45 @@ const App = () => {
   useEffect(() => {
     const getCurrentIndex = () => menuItems.findIndex((item) => item.label === activeSectionRef.current);
 
-    const handleInput = (input) => {
-      if (!inputCooldown.isReady(input, input.includes('Arrow') ? 100 : 80)) {
-        return;
+    const jumpToSection = (nextSection, dir = 'none') => {
+      transitionDirRef.current = dir;
+      // Clear library search when leaving Library
+      if (activeSectionRef.current === 'Library' && nextSection !== 'Library') {
+        setLibrarySearch('');
+        librarySearchRef.current = '';
+        clearTimeout(librarySearchTimeoutRef.current);
       }
-      
+      playNavigationSound();
+      setActiveSection(nextSection);
+      setFocusArea('menu');
+      setSubIndex(sectionSubIndexRef.current[nextSection] ?? 0);
+    };
+
+    const handleInput = (input) => {
+      if (!inputCooldown.isReady(input, input.includes('Arrow') ? 100 : 80)) return;
+
       const currentFocus = focusAreaRef.current;
       const currentItems = sectionItemsRef.current;
       const itemCount = currentItems.length;
 
       switch (input) {
         case 'ArrowLeft':
-          playNavigationSound();
           setLastInputDirection('left');
           if (currentFocus === 'menu') {
-            const currentIndex = getCurrentIndex();
-            const nextIndex = clampWrap(currentIndex - 1, menuItems.length);
-            setActiveSection(menuItems[nextIndex].label);
-            setFocusArea('menu');
-            setSubIndex(0);
+            const nextIdx = clampWrap(getCurrentIndex() - 1, menuItems.length);
+            jumpToSection(menuItems[nextIdx].label, 'left');
           } else if (itemCount > 0) {
+            playNavigationSound();
             setSubIndex((prev) => Math.max(prev - 1, 0));
           }
           break;
         case 'ArrowRight':
-          playNavigationSound();
           setLastInputDirection('right');
           if (currentFocus === 'menu') {
-            const currentIndex = getCurrentIndex();
-            const nextIndex = clampWrap(currentIndex + 1, menuItems.length);
-            setActiveSection(menuItems[nextIndex].label);
-            setFocusArea('menu');
-            setSubIndex(0);
+            const nextIdx = clampWrap(getCurrentIndex() + 1, menuItems.length);
+            jumpToSection(menuItems[nextIdx].label, 'right');
           } else if (itemCount > 0) {
+            playNavigationSound();
             setSubIndex((prev) => Math.min(prev + 1, itemCount - 1));
           }
           break;
@@ -628,6 +739,8 @@ const App = () => {
             const item = currentItems[subIndexRef.current];
             if (item?.action && !item.disabled) {
               playSelectSound();
+              setFlashItemId(item.id);
+              setTimeout(() => setFlashItemId(null), 320);
               item.action();
             } else {
               playInvalidSound();
@@ -637,93 +750,123 @@ const App = () => {
         }
         case 'Back':
         case 'Escape':
-          playBackSound();
-          if (focusAreaRef.current === 'submenu') {
-            setFocusArea('menu');
+          // If library search is active, clear it first before navigating back
+          if (librarySearchRef.current) {
+            setLibrarySearch('');
+            librarySearchRef.current = '';
+            clearTimeout(librarySearchTimeoutRef.current);
           } else {
-            setActiveSection('Home');
-            setFocusArea('menu');
+            playBackSound();
+            if (focusAreaRef.current === 'submenu') {
+              setFocusArea('menu');
+            } else {
+              jumpToSection('Home');
+            }
           }
           break;
+        default: {
+          // Number keys 1–5 jump directly to the matching section
+          const num = parseInt(input, 10);
+          if (!isNaN(num) && num >= 1 && num <= menuItems.length) {
+            jumpToSection(menuItems[num - 1].label);
+          }
+          break;
+        }
       }
     };
 
     const onKeyDown = (event) => {
       if (event.repeat) return;
-      
-      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(event.key)) {
-        return;
+
+      // Library search mode: intercept printable chars when in Library submenu
+      const inLibrarySearch = activeSectionRef.current === 'Library' && focusAreaRef.current === 'submenu';
+      if (inLibrarySearch) {
+        if (event.key === 'Backspace') {
+          setLibrarySearch((prev) => {
+            const next = prev.slice(0, -1);
+            librarySearchRef.current = next;
+            return next;
+          });
+          clearTimeout(librarySearchTimeoutRef.current);
+          librarySearchTimeoutRef.current = setTimeout(() => {
+            setLibrarySearch('');
+            librarySearchRef.current = '';
+          }, 2000);
+          event.preventDefault();
+          return;
+        }
+        if (event.key.length === 1 && /^[a-zA-Z0-9]$/.test(event.key)) {
+          const next = librarySearchRef.current + event.key;
+          librarySearchRef.current = next;
+          setLibrarySearch(next);
+          clearTimeout(librarySearchTimeoutRef.current);
+          librarySearchTimeoutRef.current = setTimeout(() => {
+            setLibrarySearch('');
+            librarySearchRef.current = '';
+          }, 2000);
+          return;
+        }
       }
-      
+
+      const navKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'];
+      const sectionKeys = ['1', '2', '3', '4', '5'];
+      if (!navKeys.includes(event.key) && !sectionKeys.includes(event.key)) return;
+      if (navKeys.includes(event.key)) event.preventDefault();
       handleInput(event.key);
-      event.preventDefault();
     };
 
     const pollGamepad = () => {
       const gamepads = navigator.getGamepads?.() || [];
       for (const pad of gamepads) {
         if (!pad) continue;
-        const currentButtons = pad.buttons.map((button) => button.pressed);
-        
+        const currentButtons = pad.buttons.map((b) => b.pressed);
         for (let i = 0; i < currentButtons.length; i++) {
-          const wasPressed = lastGamepadButtonState.current[i];
-          const isPressed = currentButtons[i];
-          
-          if (isPressed && !wasPressed) {
+          if (currentButtons[i] && !lastGamepadButtonState.current[i]) {
             switch (i) {
               case 12: handleInput('ArrowUp'); break;
               case 13: handleInput('ArrowDown'); break;
               case 14: handleInput('ArrowLeft'); break;
               case 15: handleInput('ArrowRight'); break;
-              case 0: handleInput('Enter'); break;
-              case 1: handleInput('Escape'); break;
+              case 0:  handleInput('Enter'); break;
+              case 1:  handleInput('Escape'); break;
             }
           }
         }
-        
         lastGamepadButtonState.current = [...currentButtons];
-        
-        if (pad.axes && pad.axes.length >= 2) {
-          const leftStickX = pad.axes[0] || 0;
-          const leftStickY = pad.axes[1] || 0;
-          const DEADZONE = 0.65;
-          
-          const isXActive = Math.abs(leftStickX) > DEADZONE;
-          const isYActive = Math.abs(leftStickY) > DEADZONE;
-          const wasXActive = Math.abs(lastGamepadAnalogState.current.x) > DEADZONE;
-          const wasYActive = Math.abs(lastGamepadAnalogState.current.y) > DEADZONE;
-          
-          if (isXActive && !wasXActive) {
-            handleInput(leftStickX > 0 ? 'ArrowRight' : 'ArrowLeft');
-          }
-          if (isYActive && !wasYActive) {
-            handleInput(leftStickY > 0 ? 'ArrowDown' : 'ArrowUp');
-          }
-          
-          lastGamepadAnalogState.current = { x: leftStickX, y: leftStickY };
+        if (pad.axes?.length >= 2) {
+          const lx = pad.axes[0] || 0, ly = pad.axes[1] || 0;
+          const DZ = 0.65;
+          if (Math.abs(lx) > DZ && Math.abs(lastGamepadAnalogState.current.x) <= DZ)
+            handleInput(lx > 0 ? 'ArrowRight' : 'ArrowLeft');
+          if (Math.abs(ly) > DZ && Math.abs(lastGamepadAnalogState.current.y) <= DZ)
+            handleInput(ly > 0 ? 'ArrowDown' : 'ArrowUp');
+          lastGamepadAnalogState.current = { x: lx, y: ly };
         }
       }
       gamepadPollRef.current = requestAnimationFrame(pollGamepad);
     };
 
-    window.addEventListener('keydown', onKeyDown, true);
-    
-    const disableMouse = (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+    const onGamepadConnected = () => {
+      if (!gamepadPollRef.current) gamepadPollRef.current = requestAnimationFrame(pollGamepad);
+    };
+    const onGamepadDisconnected = () => {
+      if (gamepadPollRef.current) { cancelAnimationFrame(gamepadPollRef.current); gamepadPollRef.current = null; }
     };
 
-    window.addEventListener('pointerdown', disableMouse, true);
-    window.addEventListener('mousedown', disableMouse, true);
-    window.addEventListener('contextmenu', disableMouse, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('contextmenu', (e) => e.preventDefault(), true);
+    window.addEventListener('gamepadconnected', onGamepadConnected);
+    window.addEventListener('gamepaddisconnected', onGamepadDisconnected);
 
-    gamepadPollRef.current = requestAnimationFrame(pollGamepad);
+    // If a gamepad is already connected when the effect mounts, start polling
+    if (navigator.getGamepads?.().some(Boolean)) {
+      gamepadPollRef.current = requestAnimationFrame(pollGamepad);
+    }
 
     return () => {
       window.removeEventListener('keydown', onKeyDown, true);
-      window.removeEventListener('pointerdown', disableMouse, true);
-      window.removeEventListener('mousedown', disableMouse, true);
-      window.removeEventListener('contextmenu', disableMouse, true);
+      window.removeEventListener('gamepadconnected', onGamepadConnected);
+      window.removeEventListener('gamepaddisconnected', onGamepadDisconnected);
       if (gamepadPollRef.current) cancelAnimationFrame(gamepadPollRef.current);
     };
   }, []);
@@ -743,9 +886,11 @@ const App = () => {
 
   const loadLibrary = async (forcedPath) => {
     if (!window.arqaAPI) return;
+    setLibraryLoading(true);
     const result = forcedPath
       ? await window.arqaAPI.rescanLibrary(forcedPath)
       : await window.arqaAPI.selectRomFolder();
+    setLibraryLoading(false);
 
     if (!result) return;
     if (result.error) {
@@ -846,6 +991,13 @@ const App = () => {
     appendConsole('Recently played list cleared.');
   };
 
+  const removeRecentEntry = async (romPath) => {
+    const next = recentlyPlayed.filter((p) => p !== romPath);
+    setRecentlyPlayed(next);
+    await window.arqaAPI?.saveSettings({ recentlyPlayed: next });
+    appendConsole(`Removed from recently played: ${romPath.split('/').pop()}`);
+  };
+
   const confirmOrRun = (action, run) => {
     if (pendingPowerRef.current === action) {
       clearTimeout(pendingPowerTimeout.current);
@@ -878,22 +1030,33 @@ const App = () => {
         const items = [
           { id: 'set-bazzite', icon: ACTION_ICONS.bazzite, label: 'Set Bazzite', description: 'Select the emulator executable on disk.', action: chooseBazzite },
           { id: 'browse-library', icon: ACTION_ICONS.folder, label: 'Browse Library', description: 'Choose the folder that holds your ROMs.', action: () => loadLibrary() },
-          { id: 'selected-rom', icon: ACTION_ICONS.rom, label: 'Selected ROM', description: selectedRom || 'No ROM selected yet.', disabled: true },
+          { id: 'selected-rom', icon: ACTION_ICONS.rom, label: 'Selected ROM', description: selectedRom ? formatRomName(selectedRom) : 'No ROM selected yet.', disabled: true },
           { id: 'status', icon: ACTION_ICONS.status, label: 'Status', description: status, disabled: true }
         ];
         recentlyPlayed.slice(0, 3).forEach((romPath, index) => {
-          const name = romPath.split('/').pop();
+          const raw = romPath.split('/').pop();
+          const name = formatRomName(raw);
           items.push({
             id: `recent-${index}`,
             icon: ACTION_ICONS.recent,
             label: name,
-            description: 'Recently played — press Enter to relaunch.',
-            action: () => launchPath(romPath, name)
+            description: 'Recently played \u2014 press Enter to relaunch.',
+            action: () => launchPath(romPath, raw)
+          });
+          items.push({
+            id: `recent-remove-${index}`,
+            icon: ACTION_ICONS.remove,
+            label: `Remove \u201c${name}\u201d`,
+            description: 'Remove this entry from recently played.',
+            action: () => removeRecentEntry(romPath)
           });
         });
         return items;
       }
       case 'Library': {
+        if (libraryLoading) {
+          return [{ id: 'loading', icon: ACTION_ICONS.folder, label: 'Scanning\u2026', description: 'Loading your game library, please wait.', disabled: true }];
+        }
         if (!library?.roms?.length) {
           return [{ id: 'empty', icon: ACTION_ICONS.folder, label: 'Library Empty', description: 'Pick a folder to load games.', disabled: true }];
         }
@@ -902,8 +1065,8 @@ const App = () => {
           return {
             id: rom,
             icon: PLATFORM_ICONS[platform] || PLATFORM_ICONS.unknown,
-            label: rom,
-            description: `${PLATFORM_LABELS[platform] || 'Unknown system'} · Press ✕ / Enter to launch`,
+            label: formatRomName(rom),
+            description: `${PLATFORM_LABELS[platform] || 'Unknown system'} \u00b7 \u2715 / Enter to launch`,
             action: () => launchRom(rom)
           };
         });
@@ -914,7 +1077,7 @@ const App = () => {
           items.push({ id: 'stop', icon: ACTION_ICONS.stop, label: 'Stop Game', description: 'Terminate the currently running game.', action: stopGame });
         }
         items.push(
-          { id: 'launch', icon: ACTION_ICONS.launch, label: 'Launch Selected', description: selectedRom ? `Resume "${selectedRom}" with Bazzite.` : 'No game selected yet.', action: launchSelected, disabled: !selectedRom && !library?.roms?.length },
+          { id: 'launch', icon: ACTION_ICONS.launch, label: 'Launch Selected', description: selectedRom ? `Resume \u201c${formatRomName(selectedRom)}\u201d with Bazzite.` : 'No game selected yet.', action: launchSelected, disabled: !selectedRom && !library?.roms?.length },
           { id: 'select-bazzite', icon: ACTION_ICONS.bazzite, label: 'Select Bazzite', description: 'Choose the emulator executable.', action: chooseBazzite },
           { id: 'pick-folder', icon: ACTION_ICONS.folder, label: 'Pick Folder', description: 'Load your game library from disk.', action: () => loadLibrary() }
         );
@@ -922,13 +1085,17 @@ const App = () => {
       }
       case 'Settings':
         return [
-          { id: 'navigation', icon: ACTION_ICONS.navigation, label: 'Navigation', description: 'Use arrow keys or the D-pad to move.', disabled: true },
-          { id: 'confirm', icon: ACTION_ICONS.confirm, label: 'Confirm', description: 'Press Enter or ✕ to select.', disabled: true },
-          { id: 'back', icon: ACTION_ICONS.back, label: 'Back', description: 'Press Escape or ◯ to return.', disabled: true },
+          // \u2500\u2500 Controls (informational hints) \u2500\u2500
+          { id: 'sep-controls', label: 'Controls', separator: true },
+          { id: 'navigation', icon: ACTION_ICONS.navigation, label: 'Navigate', description: '\u2190 \u2192 change section \u00b7 \u2191 \u2193 browse items \u00b7 1\u20135 jump directly.', disabled: true },
+          { id: 'confirm', icon: ACTION_ICONS.confirm, label: 'Confirm / Launch', description: 'Enter or \u2715 to select the focused item.', disabled: true },
+          { id: 'back', icon: ACTION_ICONS.back, label: 'Back', description: 'Esc or \u25cb to return to the menu bar.', disabled: true },
+          // \u2500\u2500 Options (actionable) \u2500\u2500
+          { id: 'sep-options', label: 'Options', separator: true },
           {
             id: 'gamescope',
             icon: ACTION_ICONS.gamescope,
-            label: 'Use Gamescope',
+            label: `Gamescope  ${useGamescope ? '\u2713 On' : '\u2717 Off'}`,
             description: useGamescope
               ? 'Games launch inside a gamescope session (recommended on Arqa).'
               : 'Games launch directly, without gamescope.',
@@ -938,7 +1105,7 @@ const App = () => {
             id: 'rescan',
             icon: ACTION_ICONS.folder,
             label: 'Rescan Library',
-            description: library ? `Re-check "${library.folderPath}" for new titles.` : 'No folder selected yet.',
+            description: library ? `Re-check \u201c${library.folderPath}\u201d for new titles.` : 'No folder selected yet.',
             action: () => library && loadLibrary(library.folderPath),
             disabled: !library
           },
@@ -954,16 +1121,11 @@ const App = () => {
       case 'Power':
         return ['quit', 'restart', 'sleep', 'shutdown'].map((action) => ({
           id: action,
-          icon: ACTION_ICONS.power,
+          icon: POWER_ICONS[action],
           label: pendingPower === action ? 'Press again to confirm' : POWER_LABELS[action],
           description: pendingPower === action
             ? 'This cannot be undone once confirmed.'
-            : {
-                quit: 'Closes the Arqa launcher.',
-                restart: 'Reboots the system.',
-                sleep: 'Suspends the system.',
-                shutdown: 'Powers off the system.'
-              }[action],
+            : { quit: 'Closes the Arqa launcher.', restart: 'Reboots the system.', sleep: 'Suspends the system.', shutdown: 'Powers off the system.' }[action],
           armed: pendingPower === action,
           action: () => confirmOrRun(action, () => runPowerAction(action))
         }));
@@ -1014,25 +1176,33 @@ const App = () => {
 
   const sectionItems = useMemo(
     () => buildSectionItems(activeSection),
-    [activeSection, library, selectedRom, status, recentlyPlayed, useGamescope]
+    [activeSection, library, libraryLoading, librarySearch, selectedRom, status, recentlyPlayed, useGamescope, pendingPower]
   );
-  
+
   useEffect(() => { sectionItemsRef.current = sectionItems; }, [sectionItems]);
 
-  const previewItem = sectionItems.length > 0 
-    ? sectionItems[Math.min(delayedPreviewIndex, sectionItems.length - 1)]
-    : null;
+  // Section label: name + actionable item count
+  const actionableCount = sectionItems.filter((i) => !i.disabled && !i.separator).length;
+  const sectionLabel = libraryLoading && activeSection === 'Library'
+    ? `${activeSection} \u00b7 Scanning\u2026`
+    : actionableCount > 0
+      ? `${activeSection} \u00b7 ${actionableCount}`
+      : activeSection;
 
   const submenuItems = sectionItems.length === 0
-    ? [h('div', { key: 'empty', className: 'xmb-sub-empty' },
-        h('span', null, 'No items')
-      )]
+    ? [h('div', { key: 'empty', className: 'xmb-sub-empty' }, h('span', null, 'No items'))]
     : sectionItems.map((item, index) => {
+      // Render separators as grouped section headers
+      if (item.separator) {
+        return h('div', { key: item.id, className: 'xmb-sub-separator' }, item.label);
+      }
+
       const distance = Math.abs(index - subIndex);
       const scale = Math.max(1 - distance * 0.07, 0.88);
       const opacity = Math.max(1 - distance * 0.18, 0.4);
       const isFocused = subIndex === index;
-      
+      const isFlashing = flashItemId === item.id;
+
       const isImageIcon = item.icon && (item.icon.includes('.png') || item.icon.includes('.jpg') || item.icon.includes('.svg'));
       const iconElement = isImageIcon
         ? h('img', {
@@ -1040,7 +1210,7 @@ const App = () => {
             src: item.icon,
             alt: item.label,
             onError: (e) => {
-              const fallback = PLATFORM_EMOJI[item.platform] || PLATFORM_EMOJI[item.id] || '🎮';
+              const fallback = PLATFORM_EMOJI[item.platform] || PLATFORM_EMOJI[item.id] || '\ud83c\udfae';
               e.target.replaceWith(Object.assign(document.createElement('span'), {
                 className: 'xmb-sub-icon',
                 textContent: fallback
@@ -1051,16 +1221,21 @@ const App = () => {
 
       return h('div', {
         key: item.id,
-        className: `xmb-sub-item ${focusArea === 'submenu' && isFocused ? 'focused' : ''} ${item.disabled ? 'disabled' : ''} ${item.armed ? 'armed' : ''}`,
+        className: [
+          'xmb-sub-item',
+          focusArea === 'submenu' && isFocused ? 'focused' : '',
+          item.disabled ? 'disabled' : '',
+          item.armed ? 'armed' : '',
+          isFlashing ? 'activating' : ''
+        ].filter(Boolean).join(' '),
         style: { transform: `scale(${isFocused ? 1.02 : scale})`, opacity: isFocused ? 1 : opacity },
         onClick: () => {
-          if (item.disabled) {
-            playInvalidSound();
-            return;
-          }
+          if (item.disabled) { playInvalidSound(); return; }
           playSelectSound();
           setSubIndex(index);
           setFocusArea('submenu');
+          setFlashItemId(item.id);
+          setTimeout(() => setFlashItemId(null), 320);
           item.action?.();
         }
       },
@@ -1083,61 +1258,60 @@ const App = () => {
         ? '#ffd166'
         : '#8a5cff';
 
+  const isArmedItem = focusArea === 'submenu' && sectionItems[subIndex]?.armed;
+
+  const hintBarContent = focusArea === 'menu'
+    ? h('div', { className: 'xmb-hints' },
+        h('span', { className: 'xmb-hint' }, h('kbd', null, '\u2190'), h('kbd', null, '\u2192'), '\u00a0Navigate'),
+        h('span', { className: 'xmb-hint' }, h('kbd', null, '\u2193'), '\u00a0Enter')
+      )
+    : isArmedItem
+      ? h('div', { className: 'xmb-hints' },
+          h('span', { className: 'xmb-hint xmb-hint-warn' }, '\u26a0\u00a0Press again to confirm'),
+          h('span', { className: 'xmb-hint' }, h('kbd', null, 'Esc'), '\u00a0Cancel')
+        )
+      : h('div', { className: 'xmb-hints' },
+          h('span', { className: 'xmb-hint' }, h('kbd', null, '\u2191'), h('kbd', null, '\u2193'), '\u00a0Browse'),
+          h('span', { className: 'xmb-hint' }, h('kbd', null, '\u21b5'), '\u00a0Confirm'),
+          h('span', { className: 'xmb-hint' }, h('kbd', null, 'Esc'), '\u00a0Back')
+        );
+
   return h('div', null,
-    // 🎵 Audio elements for sound effects and music
-    h('audio', { 
-      ref: navSound1Ref, 
-      preload: 'auto',
-      style: { display: 'none' }
-    }, 
+    h('audio', { ref: navSound1Ref, preload: 'auto', style: { display: 'none' } },
       h('source', { src: './assets/nav1.wav', type: 'audio/wav' })
     ),
-    
-    h('audio', { 
-      ref: navSound2Ref, 
-      preload: 'auto',
-      style: { display: 'none' }
-    }, 
+    h('audio', { ref: navSound2Ref, preload: 'auto', style: { display: 'none' } },
       h('source', { src: './assets/nav2.wav', type: 'audio/wav' })
     ),
-    
-    h('audio', { 
-      ref: invalidSoundRef, 
-      preload: 'auto',
-      style: { display: 'none' }
-    }, 
+    h('audio', { ref: invalidSoundRef, preload: 'auto', style: { display: 'none' } },
       h('source', { src: './assets/invalid.wav', type: 'audio/wav' })
     ),
-    
-    h('audio', { 
-      ref: selectSoundRef, 
-      preload: 'auto',
-      style: { display: 'none' }
-    }, 
+    h('audio', { ref: selectSoundRef, preload: 'auto', style: { display: 'none' } },
       h('source', { src: './assets/select.wav', type: 'audio/wav' })
     ),
-    
-    h('audio', { 
-      ref: menuMusicRef, 
-      preload: 'auto',
-      loop: true,
-      style: { display: 'none' }
-    }, 
+    h('audio', { ref: menuMusicRef, preload: 'auto', loop: true, style: { display: 'none' } },
       h('source', { src: './assets/menumusic1.mp3', type: 'audio/mp3' })
     ),
-    
+
     booting && h('div', { className: 'startup-overlay' },
       h('img', { className: 'startup-logo', src: './assets/ArqaLogo.png', alt: 'ARQA Logo' }),
       h('div', { className: 'startup-text' }, 'ARQA Launcher')
     ),
     h('div', { className: 'xmb-stage', tabIndex: -1 },
-      // WebGL wave background canvas
-      h('canvas', { 
+      h('canvas', {
         ref: waveCanvasRef,
         className: 'xmb-webgl-canvas',
         style: { position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none', outline: 'none' }
       }),
-      
+
+      // Per-section ambient tint overlays — only the active one is visible (opacity transition)
+      ...menuItems.map((item) =>
+        h('div', {
+          key: `bg-${item.label}`,
+          className: `xmb-section-bg xmb-section-bg-${item.label.toLowerCase()} ${activeSection === item.label ? 'active' : ''}`
+        })
+      ),
+
       h('div', { className: 'xmb-waves' }),
 
       h('div', { className: 'hud-top' },
@@ -1156,30 +1330,17 @@ const App = () => {
       ),
 
       h('div', { className: 'xmb-submenu-area', ref: submenuAreaRef },
-        h('div', { className: 'xmb-sub-section-label' }, activeSection),
-        h('div', { 
+        h('div', { className: 'xmb-sub-section-label' }, sectionLabel),
+        h('div', {
           key: `submenu-${activeSection}`,
-          className: 'xmb-sub-column'
+          className: `xmb-sub-column${transitionDirRef.current !== 'none' ? ` from-${transitionDirRef.current}` : ''}`
         },
           ...submenuItems
         )
       ),
 
-      // Focus hint bar
-      h('div', { className: 'xmb-hint-bar' },
-        focusArea === 'menu'
-          ? h('div', { className: 'xmb-hints' },
-              h('span', { className: 'xmb-hint' }, '← → Navigate'),
-              h('span', { className: 'xmb-hint' }, '↓ Select')
-            )
-          : h('div', { className: 'xmb-hints' },
-              h('span', { className: 'xmb-hint' }, '↑ ↓ Browse'),
-              h('span', { className: 'xmb-hint' }, '↵ Confirm'),
-              h('span', { className: 'xmb-hint' }, 'Esc Back')
-            )
-      ),
+      h('div', { className: 'xmb-hint-bar' }, hintBarContent),
 
-      // Vignette overlay
       h('div', { className: 'xmb-vignette' }),
 
       h('div', {
@@ -1187,17 +1348,20 @@ const App = () => {
         onClick: () => setLogExpanded((prev) => !prev)
       },
         h('div', { className: 'status-line' },
-          h('span', { className: 'status-dot', style: { background: statusColor, boxShadow: `0 0 10px ${statusColor}` } }),
+          h('span', {
+            className: `status-dot${status === 'Running' ? ' running' : ''}`,
+            style: { background: statusColor, boxShadow: `0 0 10px ${statusColor}` }
+          }),
           h('span', null, status),
-          h('span', { className: 'status-sep' }, '·'),
+          h('span', { className: 'status-sep' }, '\u00b7'),
           h('span', null, consoleState),
-          h('span', { className: 'status-hint' }, logExpanded ? 'Hide log ▾' : 'Show log ▸')
+          h('span', { className: 'status-hint' }, logExpanded ? 'Hide log \u25be' : 'Show log \u25b8')
         ),
-        logExpanded && h('pre', { className: 'console-log' }, consoleLog.join('\n'))
+        logExpanded && h('pre', { ref: consoleLogRef, className: 'console-log' }, consoleLog.join('\n'))
       )
     )
   );
 };
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(h(App));
+root.render(h(ErrorBoundary, null, h(App)));

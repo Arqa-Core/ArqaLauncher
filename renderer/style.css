@@ -86,6 +86,37 @@ body {
   overflow: hidden;
 }
 
+/* ---------- Per-section ambient tint overlays ---------- */
+
+.xmb-section-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1s ease;
+}
+
+.xmb-section-bg.active {
+  opacity: 1;
+}
+
+.xmb-section-bg-home {
+  background: radial-gradient(ellipse at 22% 54%, rgba(110, 60, 220, 0.13) 0%, transparent 55%);
+}
+.xmb-section-bg-library {
+  background: radial-gradient(ellipse at 22% 52%, rgba(55, 110, 255, 0.12) 0%, transparent 55%);
+}
+.xmb-section-bg-launch {
+  background: radial-gradient(ellipse at 22% 55%, rgba(40, 200, 140, 0.10) 0%, transparent 55%);
+}
+.xmb-section-bg-settings {
+  background: radial-gradient(ellipse at 22% 52%, rgba(160, 100, 255, 0.11) 0%, transparent 55%);
+}
+.xmb-section-bg-power {
+  background: radial-gradient(ellipse at 22% 54%, rgba(220, 55, 95, 0.11) 0%, transparent 55%);
+}
+
 /* Flowing wave background, in the spirit of the PS3 dashboard */
 
 .xmb-waves {
@@ -388,6 +419,16 @@ body {
   100% { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes submenuFromRight {
+  0%   { opacity: 0; transform: translateX(22px) translateY(4px); }
+  100% { opacity: 1; transform: translateX(0) translateY(0); }
+}
+
+@keyframes submenuFromLeft {
+  0%   { opacity: 0; transform: translateX(-22px) translateY(4px); }
+  100% { opacity: 1; transform: translateX(0) translateY(0); }
+}
+
 .xmb-submenu-area {
   position: absolute;
   top: var(--submenu-top);
@@ -423,7 +464,15 @@ body {
   overflow-y: auto;
   padding-bottom: clamp(24px, 4vh, 40px);
   mask-image: linear-gradient(180deg, black 0%, black 82%, transparent 100%);
-  animation: submenuFadeIn 0.28s cubic-bezier(0.23, 1, 0.32, 1);
+  animation: submenuFadeIn 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.xmb-sub-column.from-right {
+  animation: submenuFromRight 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.xmb-sub-column.from-left {
+  animation: submenuFromLeft 0.3s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 /* Each item row */
@@ -461,6 +510,12 @@ body {
     transparent 100%
   );
   box-shadow: inset 0 1px 0 rgba(200, 160, 255, 0.08), inset 0 -1px 0 rgba(200, 160, 255, 0.04);
+  animation: subitemFocusGlow 2.4s ease-in-out infinite;
+}
+
+@keyframes subitemFocusGlow {
+  0%, 100% { box-shadow: inset 0 1px 0 rgba(200, 160, 255, 0.08), inset 0 -1px 0 rgba(200, 160, 255, 0.04); }
+  50%  { box-shadow: inset 0 1px 0 rgba(200, 160, 255, 0.16), inset 0 -1px 0 rgba(200, 160, 255, 0.08), 0 0 14px rgba(123, 77, 255, 0.18); }
 }
 
 /* Left accent bar */
@@ -578,6 +633,25 @@ body {
   box-shadow: 0 0 8px rgba(255, 80, 110, 0.5);
 }
 
+/* Countdown progress bar at the bottom edge of an armed item */
+.xmb-sub-item.armed::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: linear-gradient(90deg, #ff3055, #ff8a93);
+  animation: armedCountdown 4s linear forwards;
+  border-radius: 0 2px 2px 0;
+}
+
+@keyframes armedCountdown {
+  0%   { width: 100%; opacity: 1; }
+  85%  { opacity: 1; }
+  100% { width: 0%;   opacity: 0; }
+}
+
 .xmb-sub-item.armed .xmb-sub-label {
   color: #ffb0b8;
 }
@@ -585,6 +659,30 @@ body {
 .xmb-sub-item.armed .xmb-sub-icon-wrap {
   background: rgba(255, 60, 90, 0.2);
   border-color: rgba(255, 100, 120, 0.25);
+}
+
+/* Flash animation when an item is activated */
+@keyframes itemActivate {
+  0%   { background: linear-gradient(90deg, rgba(210, 170, 255, 0.38) 0%, rgba(140, 90, 255, 0.18) 50%, transparent 100%); }
+  100% { background: linear-gradient(90deg, rgba(123, 77, 255, 0.22) 0%, rgba(123, 77, 255, 0.10) 50%, transparent 100%); }
+}
+
+.xmb-sub-item.activating {
+  animation: itemActivate 0.32s ease-out forwards !important;
+}
+
+/* Settings section group headers */
+.xmb-sub-separator {
+  padding: clamp(14px, 2.2vh, 20px) clamp(14px, 2.2vw, 22px) clamp(4px, 0.5vh, 6px);
+  font-size: clamp(0.54rem, 0.88vw, 0.66rem);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(140, 100, 230, 0.65);
+  border-bottom: 1px solid rgba(123, 77, 255, 0.12);
+  margin-bottom: clamp(2px, 0.3vh, 4px);
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Empty state */
@@ -613,10 +711,32 @@ body {
 }
 
 .xmb-hint {
-  font-size: clamp(0.6rem, 1vw, 0.74rem);
-  color: rgba(90, 77, 128, 0.65);
-  letter-spacing: 0.08em;
+  font-size: clamp(0.65rem, 1.05vw, 0.78rem);
+  color: rgba(190, 170, 240, 0.88);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.xmb-hint-warn {
+  color: rgba(255, 190, 100, 0.96);
+  font-weight: 600;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: inherit;
+  color: rgba(220, 200, 255, 0.95);
+  line-height: 1.4;
 }
 
 /* ---------- Static vignette frame - darkens edges smoothly ---------- */
@@ -680,6 +800,16 @@ body {
   border-radius: 50%;
   background: #8a5cff;
   box-shadow: 0 0 10px rgba(138, 84, 255, 0.8);
+  flex-shrink: 0;
+}
+
+.status-dot.running {
+  animation: statusPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.4); box-shadow: 0 0 18px currentColor, 0 0 28px rgba(70, 224, 138, 0.35); }
 }
 
 .status-sep {
